@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 import redis
@@ -183,11 +184,15 @@ def analyze(req: AnalyzeRequest):
         )
 
     if cached:
+        logger.info("cache HIT  key=%s", key)
         return AnalyzeResponse(
             findings=json.loads(cached),
             cached=True,
             cache_key=key,
         )
+
+    logger.info("cache MISS key=%s -> capturing and analyzing", key)
+    started = time.perf_counter()
 
     # Cache miss: capture + analyze. Both steps are slow. The HTTP
     # connection will be held open for ~30s — fine for a learning
@@ -198,6 +203,11 @@ def analyze(req: AnalyzeRequest):
         # Capture failed in a way we recognized before spending an
         # Anthropic call. Return a structured 422 so the frontend can
         # surface the upload affordance as an alternative.
+        logger.info(
+            "capture FAILED key=%s reason=%r (no Anthropic call made)",
+            key,
+            e.reason,
+        )
         raise HTTPException(
             status_code=422,
             detail={
@@ -212,9 +222,17 @@ def analyze(req: AnalyzeRequest):
     except Exception as e:
         # The screenshot succeeded but Claude failed (network, rate limit,
         # bad bytes). Don't cache — likely transient.
+        logger.warning("analyze FAILED key=%s error=%s", key, e)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
     r.setex(key, CACHE_TTL_SECONDS, json.dumps(findings))
+    logger.info(
+        "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
+        key,
+        elapsed_ms,
+        CACHE_TTL_SECONDS,
+    )
 
     return AnalyzeResponse(findings=findings, cached=False, cache_key=key)
 
@@ -251,11 +269,19 @@ async def analyze_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=503, detail=f"Redis unreachable: {e}")
 
     if cached:
+        logger.info("cache HIT  key=%s", key)
         return AnalyzeResponse(
             findings=json.loads(cached),
             cached=True,
             cache_key=key,
         )
+
+    logger.info(
+        "cache MISS key=%s -> analyzing %d-byte upload",
+        key,
+        len(contents),
+    )
+    started = time.perf_counter()
 
     # Persist to disk so the analyzer (which takes a path) can read it,
     # and so we have a debugging artifact for surprising results.
@@ -267,9 +293,17 @@ async def analyze_image(file: UploadFile = File(...)):
     try:
         findings = analyze_screenshot(str(image_path))
     except Exception as e:
+        logger.warning("analyze FAILED key=%s error=%s", key, e)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
     r.setex(key, CACHE_TTL_SECONDS, json.dumps(findings))
+    logger.info(
+        "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
+        key,
+        elapsed_ms,
+        CACHE_TTL_SECONDS,
+    )
 
     return AnalyzeResponse(findings=findings, cached=False, cache_key=key)
 
