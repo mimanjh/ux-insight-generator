@@ -21,10 +21,12 @@ served at `/` so the whole stack runs as one process in production.
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 
 import fakeredis
 import redis
+from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +34,11 @@ from pydantic import BaseModel, HttpUrl
 
 from backend.analyze_screenshot import analyze_screenshot
 from backend.capture import CaptureFailed, capture_url
+
+# Load .env early so REDIS_URL (and anything else env-driven) is available
+# at module import time. override=True so .env values win over an empty/
+# stale shell var — same gotcha that bit us on ANTHROPIC_API_KEY earlier.
+load_dotenv(override=True)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -43,8 +50,20 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CACHE_VERSION = 1
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
+# REDIS_URL drives the cache backend choice. Examples:
+#   redis://localhost:6379                            (local Docker / Memurai)
+#   redis://default:PASSWORD@HOST:PORT                (Redis Cloud free tier)
+#   rediss://default:PASSWORD@HOST:PORT               (TLS — note extra 's')
+# Default targets a local Redis on the standard port. Override in .env.
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
+
+# REDIS_KEY_PREFIX namespaces this project's keys so a single Redis instance
+# can be shared across multiple projects without collision. Equivalent to
+# ioredis's `keyPrefix` option, but applied explicitly at the key-construction
+# boundary (redis-py has no built-in equivalent). Include the trailing colon
+# so concatenation produces conventional Redis hierarchy notation.
+# Examples: "uxinsight:", "myproject:", "team-a:".
+REDIS_KEY_PREFIX = os.environ.get("REDIS_KEY_PREFIX", "uxinsight:")
 
 UPLOAD_DIR = PROJECT_ROOT / "screenshots" / "uploads"
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -67,31 +86,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def _build_redis_client():
-    """Try real Redis first; fall back to fakeredis with a loud warning.
+def _safe_redis_url(url: str) -> str:
+    """Hide the password in REDIS_URL for log output.
 
-    fakeredis is a pure-Python, in-process Redis-compatible mock — same
-    interface as the real thing, but no persistence and no cross-process
-    sharing. Fine for dev; swap to real Redis by starting one on
-    localhost:6379 (Docker, Memurai, WSL2).
+    redis://user:secret@host:port  ->  redis://user:***@host:port
     """
-    real = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
+    if "@" not in url:
+        return url
+    scheme_and_creds, host_part = url.rsplit("@", 1)
+    if ":" in scheme_and_creds.split("//", 1)[-1]:
+        head, _ = scheme_and_creds.rsplit(":", 1)
+        return f"{head}:***@{host_part}"
+    return url
+
+
+def _build_redis_client():
+    """Connect to the Redis at REDIS_URL; fall back to fakeredis on failure.
+
+    fakeredis is a pure-Python, in-process Redis-compatible mock - same
+    interface as the real thing, but no persistence and no cross-process
+    sharing. Fine for dev when Redis isn't reachable; for real caching
+    set REDIS_URL or run Redis on localhost:6379.
+    """
+    safe_url = _safe_redis_url(REDIS_URL)
+    real = redis.from_url(
+        REDIS_URL,
         decode_responses=True,
-        socket_connect_timeout=2,
+        socket_connect_timeout=3,
     )
     try:
         real.ping()
-        logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+        logger.info(
+            "Connected to Redis at %s (key prefix: %r)",
+            safe_url,
+            REDIS_KEY_PREFIX,
+        )
         return real
-    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError):
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
         logger.warning(
-            "Real Redis unreachable at %s:%s — falling back to fakeredis. "
-            "Cache is in-process only; start real Redis to persist across "
-            "restarts.",
-            REDIS_HOST,
-            REDIS_PORT,
+            "Real Redis unreachable at %s (%s) - falling back to fakeredis. "
+            "Cache is in-process only; will not persist across restarts.",
+            safe_url,
+            type(e).__name__,
         )
         return fakeredis.FakeRedis(decode_responses=True)
 
@@ -110,12 +146,12 @@ class AnalyzeResponse(BaseModel):
 
 
 def cache_key_for_url(url: str) -> str:
-    return f"analysis:v{CACHE_VERSION}:url:{url}"
+    return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:url:{url}"
 
 
 def cache_key_for_image(sha256_hex: str) -> str:
     # Same input bytes -> same key, regardless of filename or upload source.
-    return f"analysis:v{CACHE_VERSION}:image:{sha256_hex}"
+    return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:image:{sha256_hex}"
 
 
 api = APIRouter(prefix="/api")
