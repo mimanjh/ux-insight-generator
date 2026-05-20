@@ -1,0 +1,10 @@
+/* App.css owns the visual styling. This file exists for global resets. */
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  min-height: 100vh;
+}

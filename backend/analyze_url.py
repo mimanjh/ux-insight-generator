@@ -5,15 +5,15 @@ This is the v2 product interface. Composes capture.py (Playwright)
 and analyze_screenshot.py (Claude tool use) — no new logic of its own.
 
 Usage:
-    python analyze_url.py https://www.amazon.com/dp/B07XYZ
+    python -m backend.analyze_url https://www.amazon.com/dp/B07XYZ
 """
 
 import argparse
 import json
 from pathlib import Path
 
-from analyze_screenshot import analyze_screenshot, OUTPUT_DIR
-from capture import capture_url
+from backend.analyze_screenshot import analyze_screenshot, OUTPUT_DIR
+from backend.capture import capture_url
 
 
 def analyze_url(url: str) -> tuple[Path, Path]:

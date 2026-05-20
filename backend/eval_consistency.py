@@ -3,8 +3,8 @@ Consistency eval: run the analyzer N times on the same screenshot
 and report how stable the output is across runs.
 
 Usage:
-    python eval_consistency.py test_screenshots/amazon_product.png
-    python eval_consistency.py test_screenshots/amazon_product.png --runs 5
+    python -m backend.eval_consistency test_screenshots/amazon_product.png
+    python -m backend.eval_consistency test_screenshots/amazon_product.png --runs 5
 
 Output:
     - Each run's JSON saved to runs/eval/<image_stem>/run_<n>.json
@@ -21,7 +21,7 @@ import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from analyze_screenshot import analyze_screenshot
+from backend.analyze_screenshot import analyze_screenshot
 
 EVAL_DIR = Path("runs/eval")
 
