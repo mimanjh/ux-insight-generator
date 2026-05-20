@@ -44,7 +44,6 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<AppError | null>(null)
   const [result, setResult] = useState<ApiResponse | null>(null)
-  const [uploadOpen, setUploadOpen] = useState(false)
 
   async function submit(send: () => Promise<Response>) {
     setError(null)
@@ -67,7 +66,6 @@ export default function App() {
           (detail as Record<string, unknown>).error === 'capture_failed'
         ) {
           setError({ kind: 'capture_failed', detail: detail as CaptureFailedDetail })
-          setUploadOpen(true) // surface upload affordance
         } else {
           const message =
             typeof detail === 'string' ? detail : JSON.stringify(detail ?? `HTTP ${resp.status}`)
@@ -126,7 +124,7 @@ export default function App() {
       <header className="hero">
         <h1>UX Insight Generator</h1>
         <p className="subtitle">
-          Paste a URL to get a structured UX critique from Claude.
+          Paste a URL or upload a screenshot. Get a structured UX critique from Claude.
         </p>
       </header>
 
@@ -139,7 +137,7 @@ export default function App() {
           disabled={loading}
         />
         <button type="submit" disabled={loading || !url}>
-          {loading ? 'Analyzing…' : 'Analyze'}
+          {loading ? 'Analyzing…' : 'Analyze URL'}
         </button>
       </form>
 
@@ -153,30 +151,27 @@ export default function App() {
         <p className="status error">Error: {error.message}</p>
       )}
 
-      <details
-        className="upload-disclosure"
-        open={uploadOpen}
-        onToggle={(e) => setUploadOpen(e.currentTarget.open)}
-      >
-        <summary>URL not working? Upload a screenshot instead.</summary>
-        <form className="upload-row" onSubmit={onAnalyzeImage}>
-          <label className="file-label">
-            <input
-              type="file"
-              accept={ACCEPTED_MIME.join(',')}
-              onChange={onFileChange}
-              disabled={loading}
-            />
-            <span className="file-button">Choose image</span>
-            <span className="file-name">
-              {file ? `${file.name} (${formatBytes(file.size)})` : 'No file selected'}
-            </span>
-          </label>
-          <button type="submit" className="secondary" disabled={loading || !file}>
-            {loading ? 'Analyzing…' : 'Analyze image'}
-          </button>
-        </form>
-      </details>
+      <div className="divider">
+        <span>or</span>
+      </div>
+
+      <form className="upload-row" onSubmit={onAnalyzeImage}>
+        <label className="file-label">
+          <input
+            type="file"
+            accept={ACCEPTED_MIME.join(',')}
+            onChange={onFileChange}
+            disabled={loading}
+          />
+          <span className="file-button">Choose image</span>
+          <span className="file-name">
+            {file ? `${file.name} (${formatBytes(file.size)})` : 'No file selected'}
+          </span>
+        </label>
+        <button type="submit" disabled={loading || !file}>
+          {loading ? 'Analyzing…' : 'Analyze image'}
+        </button>
+      </form>
 
       {loading && (
         <p className="status">
