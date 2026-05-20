@@ -65,16 +65,11 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 # Examples: "uxinsight:", "myproject:", "team-a:".
 REDIS_KEY_PREFIX = os.environ.get("REDIS_KEY_PREFIX", "uxinsight:")
 
-UPLOAD_DIR = PROJECT_ROOT / "screenshots" / "uploads"
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 
-# MIME type -> file extension. Mirrors what analyze_screenshot accepts.
-MIME_TO_EXT = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-}
+# MIME types the analyzer understands. We never persist uploads to disk,
+# so we don't need a MIME->extension map here.
+ALLOWED_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 
 app = FastAPI(title="UX Insight Generator")
 
@@ -198,7 +193,7 @@ def analyze(req: AnalyzeRequest):
     # connection will be held open for ~30s — fine for a learning
     # project, would queue in production.
     try:
-        screenshot_path = capture_url(url)
+        image_bytes, media_type = capture_url(url)
     except CaptureFailed as e:
         # Capture failed in a way we recognized before spending an
         # Anthropic call. Return a structured 422 so the frontend can
@@ -218,7 +213,7 @@ def analyze(req: AnalyzeRequest):
         )
 
     try:
-        findings = analyze_screenshot(str(screenshot_path))
+        findings = analyze_screenshot(image_bytes, media_type)
     except Exception as e:
         # The screenshot succeeded but Claude failed (network, rate limit,
         # bad bytes). Don't cache — likely transient.
@@ -240,12 +235,12 @@ def analyze(req: AnalyzeRequest):
 @api.post("/analyze-image", response_model=AnalyzeResponse)
 async def analyze_image(file: UploadFile = File(...)):
     # Validate MIME type before reading any bytes.
-    if file.content_type not in MIME_TO_EXT:
+    if file.content_type not in ALLOWED_IMAGE_MIME:
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Unsupported content type {file.content_type!r}. "
-                f"Allowed: {', '.join(sorted(MIME_TO_EXT))}"
+                f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_MIME))}"
             ),
         )
 
@@ -283,15 +278,8 @@ async def analyze_image(file: UploadFile = File(...)):
     )
     started = time.perf_counter()
 
-    # Persist to disk so the analyzer (which takes a path) can read it,
-    # and so we have a debugging artifact for surprising results.
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    ext = MIME_TO_EXT[file.content_type]
-    image_path = UPLOAD_DIR / f"{sha256_hex}{ext}"
-    image_path.write_bytes(contents)
-
     try:
-        findings = analyze_screenshot(str(image_path))
+        findings = analyze_screenshot(contents, file.content_type)
     except Exception as e:
         logger.warning("analyze FAILED key=%s error=%s", key, e)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")

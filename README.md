@@ -93,9 +93,7 @@ ux-insight-generator/
 ├── frontend/                # Vite + React + TS
 │   ├── src/App.tsx          # Main UI
 │   └── vite.config.ts       # Includes /api proxy to backend in dev
-├── runs/                    # Generated CLI outputs
-├── screenshots/             # Captured page screenshots
-│   └── uploads/             # Uploaded images, named by SHA-256
+├── runs/                    # Generated CLI outputs (JSON findings)
 ├── test_screenshots/        # Hand-curated fixtures
 ├── requirements.txt
 └── .env                     # Not committed
@@ -109,8 +107,8 @@ The scripts under `backend/` work as standalone tools, run as modules from proje
 # Analyze a local screenshot directly
 python -m backend.analyze_screenshot test_screenshots/amazon_product.png
 
-# Capture a URL to a PNG (no analysis)
-python -m backend.capture https://example.com
+# Capture a URL to a PNG (no analysis). --output is required.
+python -m backend.capture https://example.com --output out.png
 
 # Capture + analyze + save findings
 python -m backend.analyze_url https://news.ycombinator.com

@@ -29,8 +29,6 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 logger = logging.getLogger(__name__)
 
-SCREENSHOT_DIR = Path("screenshots")
-
 # Default viewport — desktop above-the-fold.
 DEFAULT_VIEWPORT = (1440, 900)
 
@@ -112,17 +110,13 @@ def url_to_filename(url: str) -> str:
 
 def capture_url(
     url: str,
-    output_path: Path | None = None,
     viewport: tuple[int, int] = DEFAULT_VIEWPORT,
-) -> Path:
-    """Render `url` in headless Chromium and save a viewport screenshot.
+) -> tuple[bytes, str]:
+    """Render `url` in headless Chromium and return (png_bytes, media_type).
 
-    Returns the path the screenshot was written to.
+    Pure function: no disk I/O. Callers that want the bytes on disk (the
+    CLI, tests) write them themselves. Always returns PNG bytes.
     """
-    if output_path is None:
-        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = SCREENSHOT_DIR / f"{url_to_filename(url)}.png"
-
     width, height = viewport
 
     with sync_playwright() as p:
@@ -188,11 +182,12 @@ def capture_url(
                         f"access page (page title contains '{pattern}')."
                     )
 
-            page.screenshot(path=str(output_path), full_page=False)
+            # No path argument -> Playwright returns bytes instead of writing.
+            image_bytes = page.screenshot(full_page=False)
         finally:
             browser.close()
 
-    return output_path
+    return image_bytes, "image/png"
 
 
 if __name__ == "__main__":
@@ -203,11 +198,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output",
         type=Path,
-        default=None,
-        help="Output path (default: screenshots/<sanitized-url>.png)",
+        required=True,
+        help="Where to write the PNG (path is created if it doesn't exist).",
     )
     args = parser.parse_args()
 
     print(f"Capturing {args.url}...")
-    path = capture_url(args.url, output_path=args.output)
-    print(f"Wrote {path}")
+    image_bytes, _media_type = capture_url(args.url)
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_bytes(image_bytes)
+    print(f"Wrote {args.output}")

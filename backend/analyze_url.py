@@ -13,30 +13,33 @@ import json
 from pathlib import Path
 
 from backend.analyze_screenshot import analyze_screenshot, OUTPUT_DIR
-from backend.capture import capture_url
+from backend.capture import capture_url, url_to_filename
 
 
-def analyze_url(url: str) -> tuple[Path, Path]:
+def analyze_url(url: str) -> Path:
     """Capture `url` and run the analyzer on it.
 
-    Returns (screenshot_path, findings_json_path).
+    CLI convenience wrapper. Writes findings JSON to disk; does NOT save
+    the intermediate screenshot. If you want the screenshot, run
+    `python -m backend.capture <url> --output path.png` separately.
+
+    Returns the path to the findings JSON.
     """
     print(f"Capturing {url}...")
-    screenshot_path = capture_url(url)
-    print(f"  -> {screenshot_path}")
+    image_bytes, media_type = capture_url(url)
 
-    print(f"Analyzing {screenshot_path}...")
-    findings = analyze_screenshot(str(screenshot_path))
+    print("Analyzing...")
+    findings = analyze_screenshot(image_bytes, media_type)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    findings_path = OUTPUT_DIR / f"{screenshot_path.stem}.json"
+    findings_path = OUTPUT_DIR / f"{url_to_filename(url)}.json"
     findings_path.write_text(
         json.dumps(findings, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    print(f"  -> {findings_path}")
+    print(f"Wrote {findings_path}")
 
-    return screenshot_path, findings_path
+    return findings_path
 
 
 if __name__ == "__main__":

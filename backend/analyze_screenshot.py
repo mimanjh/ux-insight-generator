@@ -196,42 +196,43 @@ Call the `report_ux_findings` tool exactly once with your analysis. Order findin
 """
 
 
-def load_image_as_base64(path: str) -> tuple[str, str]:
-    """
-    Read an image file and return (media_type, base64_string).
+SUFFIX_TO_MEDIA_TYPE = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
-    The API needs both: the media type tells Claude what format the bytes
-    are in, and the base64 string is the actual image data as text.
+
+def load_image_from_path(path: str) -> tuple[bytes, str]:
+    """Read an image file from disk and return (bytes, media_type).
+
+    Convenience for the CLIs and for tests that want to start from a path.
+    The web API doesn't use this — it has bytes already from the upload or
+    from the Playwright capture.
     """
     image_path = Path(path)
-
     suffix = image_path.suffix.lower()
-    media_type_map = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-    }
-    if suffix not in media_type_map:
+    if suffix not in SUFFIX_TO_MEDIA_TYPE:
         raise ValueError(f"Unsupported image type: {suffix}")
-    media_type = media_type_map[suffix]
-
-    image_bytes = image_path.read_bytes()
-    image_b64 = base64.b64encode(image_bytes).decode("ascii")
-
-    return media_type, image_b64
+    return image_path.read_bytes(), SUFFIX_TO_MEDIA_TYPE[suffix]
 
 
-def analyze_screenshot(image_path: str) -> dict:
-    """Send the screenshot to Claude and return parsed structured findings."""
+def analyze_screenshot(image_bytes: bytes, media_type: str) -> dict:
+    """Send image bytes to Claude and return parsed structured findings.
+
+    Pure function: no disk I/O, no environment side effects besides the
+    Anthropic API call. Caller is responsible for providing bytes and the
+    correct media_type (one of image/png, image/jpeg, image/webp, image/gif).
+    """
     # override=True so a .env value wins over an empty/stale shell var.
     # (python-dotenv's default is the opposite, which silently breaks dev
     #  when something has already exported ANTHROPIC_API_KEY="".)
     load_dotenv(override=True)
     client = Anthropic()
 
-    media_type, image_b64 = load_image_as_base64(image_path)
+    image_b64 = base64.b64encode(image_bytes).decode("ascii")
 
     # Ground the model with today's date — fixes "this date is in the future"
     # hallucinations on screenshots that contain dates near the training cutoff.
@@ -286,9 +287,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print(f"Analyzing {args.image_path}...")
-    findings = analyze_screenshot(args.image_path)
+    image_bytes, media_type = load_image_from_path(args.image_path)
+    findings = analyze_screenshot(image_bytes, media_type)
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     image_stem = Path(args.image_path).stem
     output_path = OUTPUT_DIR / f"{image_stem}.json"
     output_path.write_text(
