@@ -4,5 +4,4 @@ playwright==1.60.0
 fastapi==0.136.1
 uvicorn[standard]==0.47.0
 redis==7.4.0
-fakeredis==2.35.1
 python-multipart==0.0.29

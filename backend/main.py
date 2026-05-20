@@ -24,7 +24,6 @@ import logging
 import os
 from pathlib import Path
 
-import fakeredis
 import redis
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
@@ -101,35 +100,33 @@ def _safe_redis_url(url: str) -> str:
 
 
 def _build_redis_client():
-    """Connect to the Redis at REDIS_URL; fall back to fakeredis on failure.
+    """Connect to Redis at REDIS_URL; raise on failure.
 
-    fakeredis is a pure-Python, in-process Redis-compatible mock - same
-    interface as the real thing, but no persistence and no cross-process
-    sharing. Fine for dev when Redis isn't reachable; for real caching
-    set REDIS_URL or run Redis on localhost:6379.
+    Redis is a hard dependency: the app uses it for result caching and
+    refuses to start without it. To run, point REDIS_URL at a reachable
+    Redis (Docker, Memurai, WSL, or Redis Cloud).
     """
     safe_url = _safe_redis_url(REDIS_URL)
-    real = redis.from_url(
+    client = redis.from_url(
         REDIS_URL,
         decode_responses=True,
         socket_connect_timeout=3,
     )
     try:
-        real.ping()
-        logger.info(
-            "Connected to Redis at %s (key prefix: %r)",
-            safe_url,
-            REDIS_KEY_PREFIX,
-        )
-        return real
+        client.ping()
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
-        logger.warning(
-            "Real Redis unreachable at %s (%s) - falling back to fakeredis. "
-            "Cache is in-process only; will not persist across restarts.",
-            safe_url,
-            type(e).__name__,
-        )
-        return fakeredis.FakeRedis(decode_responses=True)
+        raise RuntimeError(
+            f"Redis unreachable at {safe_url} ({type(e).__name__}: {e}). "
+            f"Start Redis (e.g. `docker run -d -p 6379:6379 redis`) or set "
+            f"REDIS_URL to a reachable instance."
+        ) from e
+
+    logger.info(
+        "Connected to Redis at %s (key prefix: %r)",
+        safe_url,
+        REDIS_KEY_PREFIX,
+    )
+    return client
 
 
 r = _build_redis_client()
@@ -159,15 +156,14 @@ api = APIRouter(prefix="/api")
 
 @api.get("/health")
 def health():
-    """Cheap liveness check that also reports which cache backend is in use."""
-    backend = "fakeredis" if isinstance(r, fakeredis.FakeRedis) else "redis"
+    """Cheap liveness check. Pings Redis; reports 503 if it has gone away."""
     try:
         r.ping()
-        return {"status": "ok", "cache_backend": backend}
-    except redis.exceptions.ConnectionError as e:
+        return {"status": "ok"}
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
         raise HTTPException(
             status_code=503,
-            detail=f"Cache backend unreachable: {e}",
+            detail=f"Redis unreachable: {e}",
         )
 
 

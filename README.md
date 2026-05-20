@@ -12,7 +12,7 @@ Takes a URL or screenshot of a web page and returns a structured UX critique fro
 
 - **Backend:** Python 3.12, FastAPI, Playwright (Chromium), Anthropic SDK, redis-py.
 - **Frontend:** React + TypeScript + Vite.
-- **Cache:** Redis (local Docker or Redis Cloud), with a `fakeredis` in-process fallback when no Redis is reachable.
+- **Cache:** Redis (local Docker or Redis Cloud). Required — the backend refuses to start without a reachable Redis.
 - **Model:** `claude-sonnet-4-5` for vision + structured output via tool use.
 
 ## Quickstart
@@ -153,5 +153,5 @@ docker exec -it redis-cache redis-cli
 
 - Backend reload on code change: add `--reload` to the `uvicorn` command.
 - Frontend has HMR out of the box.
-- If Redis is unreachable, the backend falls back to `fakeredis` (in-process, ephemeral). Logs warn on startup. Useful for fast iteration when you don't want to keep Docker running.
+- Redis is required. If `redis-cli ping` doesn't return `PONG`, uvicorn will fail to start with a clear error pointing at `REDIS_URL`.
 - When changing the prompt or schema, bump `CACHE_VERSION` in `backend/main.py` so stale entries don't get served.
