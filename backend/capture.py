@@ -20,11 +20,14 @@ Design notes:
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+
+logger = logging.getLogger(__name__)
 
 SCREENSHOT_DIR = Path("screenshots")
 
@@ -53,6 +56,24 @@ CHALLENGE_TITLE_PATTERNS = (
     "please complete the security",
     "access denied",
     "are you a robot",
+)
+
+# Stealth knobs. Playwright's defaults are unusually detectable — sites
+# can sniff the TLS fingerprint, the navigator.webdriver flag, and the
+# user-agent string ("HeadlessChrome") and refuse to serve. None of this
+# beats sophisticated bot detection (LinkedIn, banks), but it dramatically
+# improves the pass rate on mid-tier protection.
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+LAUNCH_ARGS = [
+    "--disable-blink-features=AutomationControlled",  # hides navigator.webdriver
+]
+# Removes the navigator.webdriver=true that the disable-blink flag misses
+# on some Playwright builds. Belt-and-suspenders.
+WEBDRIVER_HIDE_SCRIPT = (
+    "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
 )
 
 
@@ -105,11 +126,18 @@ def capture_url(
     width, height = viewport
 
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        # channel="chromium" forces the full Chrome-for-Testing build
+        # rather than the headless-shell, which has a more recognizable
+        # bot fingerprint.
+        browser = p.chromium.launch(channel="chromium", args=LAUNCH_ARGS)
         try:
             context = browser.new_context(
                 viewport={"width": width, "height": height},
+                user_agent=USER_AGENT,
+                locale="en-US",
+                timezone_id="America/New_York",
             )
+            context.add_init_script(WEBDRIVER_HIDE_SCRIPT)
             page = context.new_page()
 
             # Navigation — wrapped to convert transient errors into a
@@ -141,9 +169,11 @@ def capture_url(
                     "networkidle", timeout=NETWORK_IDLE_TIMEOUT_MS
                 )
             except PlaywrightTimeout:
-                print(
-                    f"  (networkidle didn't fire within "
-                    f"{NETWORK_IDLE_TIMEOUT_MS}ms — screenshotting anyway)"
+                logger.info(
+                    "networkidle did not fire within %dms for %s; "
+                    "screenshotting anyway",
+                    NETWORK_IDLE_TIMEOUT_MS,
+                    url,
                 )
 
             # Heuristic: page-title check for known bot-challenge / access
