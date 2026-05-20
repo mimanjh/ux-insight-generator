@@ -1,25 +1,30 @@
 """
-UX Insight Generator — v1 MVP
+UX Insight Generator — v3 MVP
 
 Reads a local screenshot, sends it to Claude with a UX-critique prompt,
 and prints suggested product improvements as plain text.
+
+v3 changes vs v2:
+- Split single "Confidence" rating into "Observation confidence" and
+  "Judgment confidence" to separate "did I see it correctly?" from
+  "is this really a problem?"
+- Added a "Calibrating your fixes" section that ties fix specificity
+  to confidence levels (no pixel values without HIGH/HIGH).
+- Added explicit instruction to suppress weak findings rather than
+  padding severity to justify their inclusion.
 """
 
 import base64
 from pathlib import Path
+import argparse
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
 # --- Config ---
-# Hardcoded for v1. We'll make these configurable later.
-SCREENSHOT_PATH = "test_screenshot.png"
 MODEL = "claude-sonnet-4-5"
-MAX_TOKENS = 1500  # bigger than hello_claude — we want a real critique
+MAX_TOKENS = 1500
 
-# This prompt is intentionally simple for v1. We will iterate on it
-# heavily in the next step once we see how the model behaves with a
-# baseline prompt. Don't over-engineer before observing reality.
 PROMPT = """You are a senior product designer doing a focused UX review of a single screenshot from a digital product. You have 15+ years of experience and have shipped consumer and developer-tool products. You care about evidence-based critique, not generic best practices.
 
 ## What you're looking at
@@ -37,15 +42,28 @@ Acknowledge these limits when relevant. Do NOT invent context to fill the gap.
 3. Identify UX issues. For each issue:
    - Anchor it to something specific you can actually see in the screenshot
    - Rate severity: HIGH (blocks/frustrates core user task), MEDIUM (causes friction or confusion), LOW (polish/nitpick)
-   - Rate your confidence: HIGH (clearly visible issue), MEDIUM (likely issue but depends on context), LOW (speculation)
+   - Rate observation confidence: HIGH (you can clearly see the element and what it's doing), MEDIUM (you can see it but its function or state is partly inferred), LOW (you're partly guessing at what the element is or does)
+   - Rate judgment confidence: assuming your observation is correct, HIGH (this is clearly a problem for likely users), MEDIUM (this is probably a problem but depends on context, intent, or data you can't see), LOW (this might be intentional or a reasonable tradeoff)
    - Explain why it matters for *this product's likely users*, not abstract UX principles
-   - Suggest a concrete fix
+   - Suggest a concrete fix (calibrated per the rules below)
 
 ## Rules
-- Skip an issue rather than padding the list. 2 sharp observations beat 5 generic ones.
+- Prefer fewer, stronger findings over more, weaker ones. A short critique of 3 strong findings is more valuable than 6 findings padded with weak ones.
+- If both observation confidence and judgment confidence are LOW, omit the finding — unless the potential issue would be severe enough that flagging it is worth the uncertainty.
+- If you find yourself inflating severity to justify including a finding, that's a signal to cut it instead.
+- Stay within "what could this screen do differently." Omit findings that are really about user behavior, platform policy, posting norms, or organizational strategy.
 - If a suggestion depends on knowing the target audience or business goals, say so explicitly.
 - Do NOT apply corporate-design defaults (e.g., "use a professional headshot") without justifying why they apply HERE.
 - Do NOT critique things you cannot verify from the screenshot alone (e.g., page load speed, accessibility of interactions you can't test).
+
+## Calibrating your suggested fixes
+Match the specificity of your fix to your confidence:
+
+- **Both confidences HIGH:** You may suggest specific changes (concrete labels, specific layout changes, specific patterns to adopt).
+- **Either confidence is MEDIUM:** Keep the fix directional. Say "increase spacing to improve hierarchy" or "clarify the label to indicate the action," not "16-24px spacing" or specific copy. Do not invent precise numbers, exact strings, or design tokens.
+- **Either confidence is LOW:** Frame the fix as a question to investigate, not a prescription. "Worth testing whether users understand X" is appropriate; "Change X to Y" is not.
+
+Specific pixel values, exact percentages, or precise copy require HIGH/HIGH. If you find yourself writing "minimum 16-24px" or "exactly 8px gap" or "change copy to '...'," check whether you actually have evidence for that specificity — you almost certainly don't from a single screenshot.
 
 ## Output format
 **What I'm looking at:** [1-2 sentences identifying the product and likely user]
@@ -57,10 +75,11 @@ Acknowledge these limits when relevant. Do NOT invent context to fill the gap.
 For each issue, use this format:
 ### [Issue title]
 - **Severity:** HIGH / MEDIUM / LOW
-- **Confidence:** HIGH / MEDIUM / LOW
+- **Observation confidence:** HIGH / MEDIUM / LOW
+- **Judgment confidence:** HIGH / MEDIUM / LOW
 - **What I see:** [specific observation anchored to the screenshot]
 - **Why it matters:** [user-impact reasoning, specific to this product]
-- **Suggested fix:** [concrete change]
+- **Suggested fix:** [concrete change, calibrated to your confidence per the rules above]
 - **Caveat (if any):** [what depends on context I can't see]
 """
 
@@ -74,8 +93,6 @@ def load_image_as_base64(path: str) -> tuple[str, str]:
     """
     image_path = Path(path)
 
-    # Figure out the media type from the file extension.
-    # Claude accepts: png, jpeg, gif, webp
     suffix = image_path.suffix.lower()
     media_type_map = {
         ".png": "image/png",
@@ -88,9 +105,6 @@ def load_image_as_base64(path: str) -> tuple[str, str]:
         raise ValueError(f"Unsupported image type: {suffix}")
     media_type = media_type_map[suffix]
 
-    # Read the raw bytes and encode them as base64.
-    # .read_bytes() returns bytes; base64.b64encode returns bytes;
-    # .decode("ascii") turns those bytes into a regular string.
     image_bytes = image_path.read_bytes()
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
 
@@ -132,6 +146,15 @@ def analyze_screenshot(image_path: str) -> str:
 
 
 if __name__ == "__main__":
-    print(f"Analyzing {SCREENSHOT_PATH}...\n")
-    critique = analyze_screenshot(SCREENSHOT_PATH)
+    parser = argparse.ArgumentParser(
+        description="Analyze a screenshot and suggest UX improvements."
+    )
+    parser.add_argument(
+        "image_path",
+        help="Path to the screenshot image (PNG, JPG, GIF, or WEBP)",
+    )
+    args = parser.parse_args()
+
+    print(f"Analyzing {args.image_path}...\n")
+    critique = analyze_screenshot(args.image_path)
     print(critique)
