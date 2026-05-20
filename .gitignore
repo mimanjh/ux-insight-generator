@@ -1,0 +1,16 @@
+# Secrets — never commit these
+.env
+
+# Python virtual environment
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# VS Code workspace settings (personal preferences)
+.vscode/
+
+# OS metadata
+Thumbs.db
+.DS_Store
