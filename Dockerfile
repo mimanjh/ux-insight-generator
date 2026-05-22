@@ -17,7 +17,13 @@ RUN npm run build
 # binary. Saves us a ~200 MB browser download at build time and avoids
 # missing-system-dep issues that bite when you install Playwright on a
 # slim base image manually.
-FROM mcr.microsoft.com/playwright/python:v1.60.0-jammy
+#
+# Use the `noble` (Ubuntu 24.04) tag, NOT `jammy` (22.04). noble ships
+# Python 3.12, matching the local dev environment. jammy is Python 3.10,
+# which is too old for some deps (e.g. numpy 2.4.x requires >= 3.11).
+# Keep the container's Python aligned with dev to avoid "installs on my
+# machine, fails in CI" build breaks.
+FROM mcr.microsoft.com/playwright/python:v1.60.0-noble
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
