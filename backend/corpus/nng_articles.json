@@ -1,0 +1,216 @@
+{
+    "_comment": "Starter corpus for RAG citation grounding. Each entry is an ORIGINAL short summary of a real Nielsen Norman Group article (NNG article text is copyrighted — do not paste it here). 'id' is the nngroup.com article slug. 'themes' use the same 7-theme taxonomy as the critique tool. Verify each URL and expand this list freely — build_index.py re-embeds the whole file.",
+    "version": 1,
+    "articles": [
+        {
+            "id": "ten-usability-heuristics",
+            "title": "10 Usability Heuristics for User Interface Design",
+            "url": "https://www.nngroup.com/articles/ten-usability-heuristics/",
+            "themes": ["interaction_design", "other"],
+            "summary": "Jakob Nielsen's 10 general principles for interaction design: visibility of system status, match between the system and the real world, user control and freedom, consistency and standards, error prevention, recognition rather than recall, flexibility and efficiency of use, aesthetic and minimalist design, helping users recognize and recover from errors, and help and documentation. They are called heuristics because they are broad rules of thumb, not specific usability guidelines. The set is the most widely cited framework for expert usability review and works as a checklist for evaluating almost any interface."
+        },
+        {
+            "id": "visibility-system-status",
+            "title": "Visibility of System Status (Usability Heuristic #1)",
+            "url": "https://www.nngroup.com/articles/visibility-system-status/",
+            "themes": ["interaction_design", "trust_and_credibility"],
+            "summary": "Heuristic #1: a design should always keep users informed about what is going on through timely, appropriate feedback. When the system communicates its current state — loading, saved, in progress, error, which item is selected — users can predict the outcome of their actions and decide what to do next. Visible status builds trust because it shows the system is responsive and reduces uncertainty. Missing feedback leaves users guessing whether a click registered, whether data was saved, or whether the page is broken. Progress indicators, loading states, and confirmation messages are common implementations."
+        },
+        {
+            "id": "match-between-the-system-and-the-real-world",
+            "title": "Match Between the System and the Real World (Usability Heuristic #2)",
+            "url": "https://www.nngroup.com/articles/match-between-the-system-and-the-real-world/",
+            "themes": ["interaction_design", "cognitive_load"],
+            "summary": "Heuristic #2: a design should always match the real world. Users are familiar with the real world, so a system should use terminology and concepts that are familiar to them. This includes using real-world metaphors, following conventions, and presenting information in a way that is consistent with how users understand the world. When a system uses unfamiliar terms or concepts, it increases cognitive load and makes it harder for users to interact with it."
+        },
+        {
+            "id": "user-control-and-freedom",
+            "title": "User Control and Freedom (Usability Heuristic #3)",
+            "url": "https://www.nngroup.com/articles/user-control-and-freedom/",
+            "themes": ["interaction_design", "navigation_and_wayfinding"],
+            "summary": "Heuristic #3: users often take actions by mistake and need a clearly marked emergency exit to leave an unwanted state without an extended process. Support undo and redo, make it easy to cancel or back out of flows, and avoid trapping people in modals or multi-step processes with no obvious way out. When users feel they can explore freely and reverse mistakes, they interact more confidently. Designs that hide cancel options, disable the back button, or make destructive actions hard to undo violate this principle."
+        },
+        {
+            "id": "consistency-and-standards",
+            "title": "Consistency and Standards (Usability Heuristic #4)",
+            "url": "https://www.nngroup.com/articles/consistency-and-standards/",
+            "themes": ["interaction_design", "cognitive_load"],
+            "summary": "Heuristic #4: a design should follow established conventions and be consistent in its use of terminology, layout, and functionality. Users are familiar with common patterns and expect similar behavior across different parts of a system. Inconsistent designs increase cognitive load and make it harder for users to learn and use the system effectively."
+        },
+        {
+            "id": "error-prevention",
+            "title": "Error Prevention (Usability Heuristic #5)",
+            "url": "https://www.nngroup.com/articles/error-prevention/",
+            "themes": ["interaction_design", "cognitive_load"],
+            "summary": "Heuristic #5: a design should prevent errors from occurring in the first place. This includes providing clear feedback, using intuitive controls, and designing workflows that minimize the chance of mistakes. When errors do occur, the system should provide helpful error messages and easy ways to correct them."
+        },
+        {
+            "id": "recognition-rather-than-recall",
+            "title": "Recognition Rather Than Recall (Usability Heuristic #6)",
+            "url": "https://www.nngroup.com/articles/recognition-rather-than-recall/",
+            "themes": ["interaction_design", "memory"],
+            "summary": "Heuristic #6: users should be able to recognize information rather than having to remember it. This means using familiar labels, icons, and layouts that users can easily identify and understand. When users can quickly recognize what they're looking for, they can navigate more efficiently and with less cognitive load."
+        },
+        {
+            "id": "flexibility-and-efficiency-of-use",
+            "title": "Flexibility and Efficiency of Use (Usability Heuristic #7)",
+            "url": "https://www.nngroup.com/articles/flexibility-and-efficiency-of-use/",
+            "themes": ["interaction_design", "productivity"],
+            "summary": "Heuristic #7: a design should cater to users with varying levels of experience and expertise. This includes providing shortcuts for advanced users, offering customizable interfaces, and ensuring that the system is easy to learn for novices while still being efficient for experts."
+        },
+        {
+            "id": "aesthetic-and-minimalist-design",
+            "title": "Aesthetic and Minimalist Design (Usability Heuristic #8)",
+            "url": "https://www.nngroup.com/articles/aesthetic-and-minimalist-design/",
+            "themes": ["interaction_design", "visual_design"],
+            "summary": "Heuristic #8: a design should be visually appealing and minimize unnecessary elements. This means avoiding clutter, using consistent visual styles, and ensuring that the interface is easy on the eyes. Aesthetically pleasing designs can improve user satisfaction and make the system more enjoyable to use."
+        },
+        {
+            "id": "help-users-recognize-and-recover-from-errors",
+            "title": "Help Users Recognize and Recover from Errors (Usability Heuristic #9)",
+            "url": "https://www.nngroup.com/articles/help-users-recognize-and-recover-from-errors/",
+            "themes": ["interaction_design", "error_prevention_and_handling"],
+            "summary": "Heuristic #9: a design should help users recognize, diagnose, and recover from errors. This means providing clear error messages, suggesting corrective actions, and ensuring that errors are easy to understand and resolve. When users encounter errors, they should be able to quickly identify the problem and take steps to fix it."
+        },
+        {
+            "id": "help-and-documentation",
+            "title": "Help and Documentation (Usability Heuristic #10)",
+            "url": "https://www.nngroup.com/articles/help-and-documentation/",
+            "themes": ["information_hierarchy", "content_clarity"],
+            "summary": "Heuristic #10: a design should provide helpful and easy-to-access documentation and support. This means making it simple for users to find information about how to use the system, what features are available, and how to troubleshoot common issues. Well-designed help systems can reduce user frustration and improve overall satisfaction with the product."
+        },
+        {
+            "id": "f-shaped-pattern-reading-web-content",
+            "title": "F-Shaped Pattern of Reading on the Web",
+            "url": "https://www.nngroup.com/articles/f-shaped-pattern-reading-web-content/",
+            "themes": ["information_hierarchy", "content_clarity"],
+            "summary": "Eye-tracking research shows users often scan text-heavy pages in an F-shaped pattern: two horizontal sweeps across the top, then a vertical scan down the left edge. The pattern is a symptom of poor formatting — it appears when content is not structured to support scanning. The implications: front-load the most important words in headings and the first paragraph, use meaningful subheadings, bullet lists, and bold key terms, and do not bury critical information in the middle of long paragraphs. Strong visual hierarchy and formatting guide the eye to what matters."
+        },
+        {
+            "id": "progressive-disclosure",
+            "title": "Progressive Disclosure",
+            "url": "https://www.nngroup.com/articles/progressive-disclosure/",
+            "themes": ["information_hierarchy", "interaction_design"],
+            "summary": "Progressive disclosure defers advanced or rarely used features to a secondary screen, showing only the primary options by default. It keeps interfaces focused and easier to learn while still making powerful features available to users who need them. The technique reduces cognitive load and error rates by not overwhelming users with everything at once. Common implementations include advanced-settings sections, show-more links, accordions, and step-by-step wizards. The key is splitting features correctly: the initial screen must cover what most users need most of the time, with a clear, visible path to the rest."
+        },
+        {
+            "id": "characteristics-minimalism",
+            "title": "The Characteristics of Minimalism in Web Design",
+            "url": "https://www.nngroup.com/articles/characteristics-minimalism/",
+            "themes": ["information_hierarchy", "other"],
+            "summary": "Minimalist web design strips away ornamentation to focus attention on essential content and actions. Common characteristics include flat patterns and textures, restricted color palettes, limited navigation chrome, generous negative space, and dramatic typography. Minimalism done well sharpens visual hierarchy and reduces distraction. Done poorly, it removes useful signifiers — visible buttons, borders, contrast — and harms usability in the name of looking clean. Minimalism is a means, not a goal: the test is whether removing an element improves the user's ability to understand and act, not whether the page looks emptier."
+        },
+        {
+            "id": "communicating-trustworthiness",
+            "title": "Trust or Bust: Communicating Trustworthiness in Web Design",
+            "url": "https://www.nngroup.com/articles/communicating-trustworthiness/",
+            "themes": ["trust_and_credibility"],
+            "summary": "To convert visitors into customers, a site must present itself as credible. Four ways a website communicates trustworthiness: design quality (professional, polished, error-free presentation), up-front disclosure of information users care about such as costs and shipping, comprehensive and current content, and connection to the rest of the web through inbound links and references. Visible quality signals matter because users judge credibility quickly and at a glance. Sloppy layout, broken elements, outdated content, or hidden costs erode trust before users ever evaluate the actual offering."
+        },
+        {
+            "id": "trustworthy-design",
+            "title": "Trustworthiness in Web Design: 4 Credibility Factors",
+            "url": "https://www.nngroup.com/articles/trustworthy-design/",
+            "themes": ["trust_and_credibility"],
+            "summary": "Users decide whether to trust a website within seconds, often before reading much content. Four credibility factors drive that judgment: the visual design and professionalism of the page, transparency about who is behind the site and how to contact them, social proof such as reviews and testimonials, and clear, honest communication free of exaggeration. Trust signals must be visible at the decision point — near a price, a form, or a call to action — not buried on an About page. Missing or inconsistent trust cues raise suspicion, especially on pages asking for money or personal data."
+        },
+        {
+            "id": "commitment-levels",
+            "title": "Hierarchy of Trust: The 5 Experiential Levels of Website Commitment",
+            "url": "https://www.nngroup.com/articles/commitment-levels/",
+            "themes": ["trust_and_credibility"],
+            "summary": "Trust on a website is built gradually through a hierarchy of escalating commitments. At the lowest level, users must trust the site enough to find its baseline information credible. Higher levels require more: trusting the site with an email address, with personal information, and finally with payment and a financial relationship. Each level demands more reassurance than the last. The design implication: do not ask for high-commitment actions — account creation, payment, sensitive data — before the site has earned trust at the lower levels. Match the reassurance you provide to the commitment you request."
+        },
+        {
+            "id": "error-message-guidelines",
+            "title": "Error-Message Guidelines",
+            "url": "https://www.nngroup.com/articles/error-message-guidelines/",
+            "themes": ["content_clarity", "interaction_design"],
+            "summary": "Effective error messages are explicit, human-readable, polite, precise, and offer constructive guidance. They should be highly visible, placed close to where the problem occurred, and written in plain language rather than codes or jargon. A good error message tells the user what went wrong and how to fix it, without blaming them, and preserves the user's work and effort. Vague messages such as 'An error occurred', messages that disappear too quickly, or messages located far from the relevant field force users to guess and increase frustration and abandonment."
+        },
+        {
+            "id": "errors-forms-design-guidelines",
+            "title": "10 Design Guidelines for Reporting Errors in Forms",
+            "url": "https://www.nngroup.com/articles/errors-forms-design-guidelines/",
+            "themes": ["interaction_design", "content_clarity"],
+            "summary": "Ten guidelines for reporting errors in forms. Error messages should be noticeable, use a clear visual indicator such as color and an icon, and never rely on color alone. They should appear next to the field in question, describe the specific problem, and tell the user how to correct it. Preserve everything the user has already entered. Where possible validate in real time, but avoid showing errors prematurely while the user is still typing. The goal is to help users recover quickly without losing work or hunting for what went wrong."
+        },
+        {
+            "id": "hostile-error-messages",
+            "title": "Hostile Patterns in Error Messages",
+            "url": "https://www.nngroup.com/articles/hostile-error-messages/",
+            "themes": ["interaction_design", "content_clarity"],
+            "summary": "Hostile error patterns punish users for normal behavior. The most common is premature validation — an error appears the moment the user starts typing, before they have had any chance to finish or make a mistake. Other hostile patterns include accusatory wording, error messages that clear the form, and validation that rejects valid input due to overly strict formatting rules. These patterns increase anxiety and abandonment. Validation should be forgiving: wait for a reasonable signal that the user is done with a field, accept input in multiple formats, and frame messages as help, not blame."
+        },
+        {
+            "id": "form-design-placeholders",
+            "title": "Placeholders in Form Fields Are Harmful",
+            "url": "https://www.nngroup.com/articles/form-design-placeholders/",
+            "themes": ["content_clarity", "accessibility"],
+            "summary": "Using placeholder text inside a form field as a replacement for a visible label harms usability. Once the user starts typing, the placeholder disappears, so they lose the reminder of what the field is for and cannot easily review their entries for errors. Placeholder text also typically has low color contrast, creating accessibility problems, and can be mistaken for a pre-filled value. The recommendation: use a persistent, visible label above or beside every field. If extra guidance is needed, place it as separate help text rather than inside the field."
+        },
+        {
+            "id": "required-fields",
+            "title": "Marking Required Fields in Forms",
+            "url": "https://www.nngroup.com/articles/required-fields/",
+            "themes": ["content_clarity", "interaction_design"],
+            "summary": "Forms should clearly mark which fields are required and which are optional. When most fields are required, marking the few optional ones is less cluttered; when most are optional, mark the required ones. The asterisk is widely understood for required fields but should be paired with an explicit legend or the word 'required' for accessibility. Ambiguity about what must be filled in causes errors and hesitation. The broader principle: only ask for information you genuinely need — every extra required field adds friction and abandonment risk."
+        },
+        {
+            "id": "web-form-design",
+            "title": "Website Forms Usability: Top 10 Recommendations",
+            "url": "https://www.nngroup.com/articles/web-form-design/",
+            "themes": ["content_clarity", "interaction_design"],
+            "summary": "Top recommendations for usable web forms: keep forms as short as possible and remove unnecessary fields; use a single-column layout so the path through the form is unambiguous; place labels above fields; group related fields; clearly distinguish primary actions from secondary ones; and reserve helpful, specific error handling for when validation fails. Match input controls to the data type and set expectations about format before the user types rather than after a mistake. Long, cluttered, multi-column forms increase cognitive load and abandonment."
+        },
+        {
+            "id": "4-principles-reduce-cognitive-load",
+            "title": "4 Principles to Reduce Cognitive Load in Forms",
+            "url": "https://www.nngroup.com/articles/4-principles-reduce-cognitive-load/",
+            "themes": ["content_clarity", "interaction_design"],
+            "summary": "Forms tax users' working memory. Four principles reduce that load: minimize the number of fields and steps so users hold less in mind at once; provide clear, specific guidance before the user acts rather than correcting them afterward; use smart defaults and pre-filled values where safe; and give immediate, understandable feedback so users are not left guessing. Every guess a form forces — about format, about what counts as required, about whether an entry was accepted — is a chance to fail. Reducing guesswork raises completion rates."
+        },
+        {
+            "id": "navigation-you-are-here",
+            "title": "Navigation: You Are Here",
+            "url": "https://www.nngroup.com/articles/navigation-you-are-here/",
+            "themes": ["navigation_and_wayfinding"],
+            "summary": "Good navigation answers a basic user question: where am I? Interfaces should clearly indicate the user's current location within the site or app structure — through highlighted menu items, page titles, breadcrumbs, and consistent section cues. When the current-location indicator is missing or ambiguous, users lose orientation, struggle to build a mental model of the site, and have difficulty navigating to related content. 'You are here' feedback is especially important on deep sites and after users arrive via search or a direct link rather than the homepage."
+        },
+        {
+            "id": "breadcrumbs",
+            "title": "Breadcrumbs: 11 Design Guidelines for Desktop and Mobile",
+            "url": "https://www.nngroup.com/articles/breadcrumbs/",
+            "themes": ["navigation_and_wayfinding", "information_hierarchy"],
+            "summary": "Breadcrumbs are a secondary navigation aid that shows the user's location in a site's hierarchy as a linked path from the home page down to the current page. Design guidelines: use breadcrumbs as a supplement to primary navigation, not a replacement; show the full path; make every level except the current page clickable; keep them near the top of the page; and use a clear separator. Breadcrumbs help users who land deep in a site understand context and move up to broader categories with one click. User testing shows benefits and no downsides."
+        },
+        {
+            "id": "menu-design",
+            "title": "Menu-Design Checklist: 17 UX Guidelines",
+            "url": "https://www.nngroup.com/articles/menu-design/",
+            "themes": ["navigation_and_wayfinding", "content_clarity"],
+            "summary": "A checklist of guidelines for usable menus. Menus should be easy to find, with clear, descriptive labels that use the user's vocabulary rather than internal jargon. Make menu items visually distinct as interactive elements, indicate the current selection, and keep the structure shallow and scannable. Avoid hiding primary navigation behind ambiguous icons when space allows showing it. Group related items logically and ensure menus work across screen sizes. Poorly labeled or hard-to-find menus leave users unable to discover what a site offers."
+        },
+        {
+            "id": "visual-treatments-accessibility",
+            "title": "5 Visual Treatments that Improve Accessibility",
+            "url": "https://www.nngroup.com/articles/visual-treatments-accessibility/",
+            "themes": ["accessibility"],
+            "summary": "Five visual treatments make interfaces more accessible. Ensure sufficient color contrast between text and background. Never rely on color alone to convey meaning — pair it with text, icons, or patterns so colorblind users are not excluded. Make interactive elements visibly identifiable as clickable. Provide useful alternative text for meaningful images. And test designs with real users, including those who use assistive technology. These treatments help users with low vision, color blindness, and cognitive differences, and generally improve clarity for everyone."
+        },
+        {
+            "id": "low-contrast",
+            "title": "Low-Contrast Text Is Not the Answer",
+            "url": "https://www.nngroup.com/articles/low-contrast/",
+            "themes": ["accessibility", "information_hierarchy"],
+            "summary": "Low-contrast text — light gray type on a white background — has become a common trend, often justified as minimalist or modern. It is an accessibility failure. WCAG requires a contrast ratio of at least 4.5:1 for normal text and 3:1 for large text. Low-contrast text is hard to read for users with low vision, in bright light, or on low-quality screens, and it slows down everyone. De-emphasizing content by making it nearly invisible is not real visual hierarchy. If text matters enough to include, it should be legible; if it does not, remove it."
+        },
+        {
+            "id": "usability-heuristics-complex-applications",
+            "title": "10 Usability Heuristics Applied to Complex Applications",
+            "url": "https://www.nngroup.com/articles/usability-heuristics-complex-applications/",
+            "themes": ["interaction_design", "information_hierarchy"],
+            "summary": "The 10 usability heuristics still apply to complex, data-dense enterprise applications, but they require interpretation. Visibility of system status matters more when long-running processes are common. Error prevention is critical when actions are consequential and hard to reverse. Aesthetic and minimalist design must be balanced against the genuine need to show dense information — the goal is prioritization and clear hierarchy, not removing necessary content. Recognition over recall means surfacing options and context rather than expecting expert users to memorize them. The heuristics are a lens, not a rigid rulebook."
+        }
+    ]
+}

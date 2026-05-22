@@ -4,6 +4,13 @@ import './App.css'
 type Severity = 'high' | 'medium' | 'low'
 type Confidence = 'high' | 'medium' | 'low'
 
+interface Citation {
+  article_id: string
+  title: string
+  url: string
+  relevance_note: string | null
+}
+
 interface Finding {
   title: string
   theme: string
@@ -14,6 +21,7 @@ interface Finding {
   why_it_matters: string
   suggested_fix: string
   caveat: string | null
+  citation: Citation | null
 }
 
 interface AnalysisPayload {
@@ -245,6 +253,15 @@ function FindingCard({ f }: { f: Finding }) {
       {f.caveat && (
         <p className="caveat">
           <strong>Caveat:</strong> {f.caveat}
+        </p>
+      )}
+      {f.citation && (
+        <p className="citation">
+          <strong>Source:</strong>{' '}
+          <a href={f.citation.url} target="_blank" rel="noopener noreferrer">
+            {f.citation.title}
+          </a>
+          {f.citation.relevance_note && ` — ${f.citation.relevance_note}`}
         </p>
       )}
     </article>

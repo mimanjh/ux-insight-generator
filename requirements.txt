@@ -5,3 +5,5 @@ fastapi==0.136.1
 uvicorn[standard]==0.47.0
 redis==7.4.0
 python-multipart==0.0.29
+voyageai==0.3.7
+numpy==2.4.6

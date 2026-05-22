@@ -1,11 +1,12 @@
 # UX Insight Generator
 
-Takes a URL or screenshot of a web page and returns a structured UX critique from Claude. A learning project for AI engineering fundamentals: prompt engineering, structured outputs via tool use, evaluation, caching, and a small full-stack app around the model call.
+Takes a URL or screenshot of a web page and returns a structured UX critique from Claude, with each finding grounded in a cited Nielsen Norman Group article via RAG. A learning project for AI engineering fundamentals: prompt engineering, structured outputs via tool use, retrieval-augmented generation, evaluation, caching, and a small full-stack app around the model call.
 
 ## What it does
 
 - **Input:** a URL (captured via Playwright) or an uploaded image (PNG/JPG/WEBP/GIF, up to 5 MB).
 - **Output:** structured JSON findings — what the model sees, what's working, and a ranked list of UX issues with severity, theme, observation/judgment confidence, and concrete fixes.
+- **Citations:** each finding is grounded against a corpus of Nielsen Norman Group articles via RAG — retrieved by semantic similarity, then attached only if Claude judges the article genuinely supports the finding.
 - Results are cached in Redis so re-analyzing the same URL or image costs nothing.
 
 ## Stack
@@ -13,7 +14,8 @@ Takes a URL or screenshot of a web page and returns a structured UX critique fro
 - **Backend:** Python 3.12, FastAPI, Playwright (Chromium), Anthropic SDK, redis-py.
 - **Frontend:** React + TypeScript + Vite.
 - **Cache:** Redis (local Docker or Redis Cloud). Required — the backend refuses to start without a reachable Redis.
-- **Model:** `claude-sonnet-4-5` for vision + structured output via tool use.
+- **Model:** `claude-sonnet-4-5` for vision + structured output via tool use, and again for citation grounding.
+- **Embeddings:** Voyage AI (`voyage-4`) for the RAG corpus and query embeddings. Stored as a numpy `.npz` — no vector database needed at this corpus size.
 
 ## Quickstart
 
@@ -37,14 +39,18 @@ docker run -d --name redis-cache -p 6379:6379 redis
 # 4. Configure secrets
 # Create .env in the project root with at minimum:
 #   ANTHROPIC_API_KEY=sk-ant-...
+#   VOYAGE_API_KEY=pa-...                   (for RAG embeddings)
 # Optionally:
 #   REDIS_URL=redis://localhost:6379        (default if unset)
 #   REDIS_KEY_PREFIX=uxinsight:             (default if unset)
 
-# 5. Run backend (terminal A)
+# 5. Build the RAG index (one-time; rerun when the corpus changes)
+python -m backend.build_index
+
+# 6. Run backend (terminal A)
 uvicorn backend.main:app --reload --port 8000
 
-# 6. Run frontend dev server (terminal B)
+# 7. Run frontend dev server (terminal B)
 cd frontend
 npm run dev
 # open http://localhost:5173
@@ -67,6 +73,7 @@ All via `.env` (or shell environment).
 | Variable | Required | Default | Notes |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | yes | — | API key for Claude. |
+| `VOYAGE_API_KEY` | yes | — | API key for Voyage AI embeddings ([voyageai.com](https://www.voyageai.com/)). Used by `build_index.py` and at query time. Without it, analysis still works but findings get no citations. |
 | `REDIS_URL` | no | `redis://localhost:6379` | Use `rediss://` for TLS. Format: `redis://[user:pass@]host:port[/db]`. |
 | `REDIS_KEY_PREFIX` | no | `uxinsight:` | Lets one Redis instance host multiple projects without collisions. |
 
@@ -88,6 +95,12 @@ ux-insight-generator/
 │   ├── main.py              # FastAPI app + Redis cache + static mount
 │   ├── analyze_screenshot.py # Claude vision + tool-use prompt (the core)
 │   ├── capture.py           # Playwright capture with bot-evasion + fail-fast
+│   ├── build_index.py       # RAG: embed the corpus -> nng_index.npz (offline)
+│   ├── retrieval.py         # RAG: embed a query + cosine-rank the corpus
+│   ├── ground_findings.py   # RAG: 2nd Claude call attaches cited articles
+│   ├── corpus/
+│   │   ├── nng_articles.json # Curated NNG article summaries (the corpus)
+│   │   └── nng_index.npz    # Generated embeddings (gitignored)
 │   ├── analyze_url.py       # CLI: URL -> screenshot -> findings
 │   └── eval_consistency.py  # CLI: N-run consistency eval
 ├── frontend/                # Vite + React + TS
@@ -117,6 +130,24 @@ python -m backend.analyze_url https://news.ycombinator.com
 python -m backend.eval_consistency test_screenshots/amazon_product.png --runs 3
 ```
 
+## RAG citation grounding
+
+Each finding is grounded in a real NNG article so the critique cites evidence instead of asserting best practices from memory. The pipeline has two halves:
+
+**Offline — build the index (`build_index.py`):**
+1. `corpus/nng_articles.json` holds ~22 curated NNG articles, each with an original short summary and theme tags. (The summaries are written for this project — NNG article text is copyrighted and is *not* stored here.)
+2. Each `title + summary` is embedded with Voyage `voyage-4` and saved to `corpus/nng_index.npz` (an `(N, D)` vector matrix + aligned metadata). Run once; rerun whenever the corpus changes.
+
+**Per request — retrieve + ground (`retrieval.py` + `ground_findings.py`):**
+3. After `analyze_screenshot` returns findings, each finding becomes a query string (`theme + title + what_i_see + why_it_matters`).
+4. The queries are embedded and cosine-ranked against the index; the top ~4 articles per finding are the candidates.
+5. A second Claude call (`attach_citations` tool) sees each finding with *only* its candidate articles and picks at most one — or declines. It may not cite anything outside the candidate list, and the backend validates every returned id against what was offered. That constraint is what prevents hallucinated citations.
+6. Each finding gains a `citation` field: `null`, or `{article_id, title, url, relevance_note}`.
+
+The step is non-fatal: if `nng_index.npz` is missing or Voyage/Claude errors, every finding just gets `citation: null` and the analysis returns normally.
+
+To grow the corpus, add entries to `nng_articles.json` and rerun `python -m backend.build_index`. There is no vector database — brute-force cosine over a few dozen vectors is instant. A real vector store earns its place at 10k+ documents.
+
 ## Cache notes
 
 The cache key has the shape:
@@ -135,8 +166,8 @@ TTL is 24h. Failures are not cached. To inspect or wipe the cache:
 ```bash
 docker exec -it redis-cache redis-cli
 > KEYS uxinsight:*                  # all this project's keys
-> GET uxinsight:analysis:v1:url:https://example.com/
-> DEL uxinsight:analysis:v1:url:...
+> GET uxinsight:analysis:v2:url:https://example.com/
+> DEL uxinsight:analysis:v2:url:...
 ```
 
 ## Known limitations
