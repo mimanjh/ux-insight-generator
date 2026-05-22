@@ -22,3 +22,7 @@ Thumbs.db
 runs/
 test_screenshots/
 screenshots/
+test-screenshot.png
+
+# Generated RAG index — rebuild with `python -m backend.build_index`
+backend/corpus/nng_index.npz

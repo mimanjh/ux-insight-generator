@@ -34,6 +34,7 @@ from pydantic import BaseModel, HttpUrl
 
 from backend.analyze_screenshot import analyze_screenshot
 from backend.capture import CaptureFailed, capture_url
+from backend.ground_findings import ground_findings
 
 # Load .env early so REDIS_URL (and anything else env-driven) is available
 # at module import time. override=True so .env values win over an empty/
@@ -47,7 +48,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Bump this whenever anything that affects model output changes:
 # prompt text, model id, tool schema, theme taxonomy, etc. Old cache
 # entries become unreachable instantly — no flush needed.
-CACHE_VERSION = 1
+# v2: findings now carry a RAG-grounded `citation` field.
+CACHE_VERSION = 2
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 # REDIS_URL drives the cache backend choice. Examples:
@@ -220,6 +222,10 @@ def analyze(req: AnalyzeRequest):
         logger.warning("analyze FAILED key=%s error=%s", key, e)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
+    # RAG step: ground each finding in a real NNG article. Never raises —
+    # on failure findings just carry citation=None.
+    findings = ground_findings(findings)
+
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     r.setex(key, CACHE_TTL_SECONDS, json.dumps(findings))
     logger.info(
@@ -283,6 +289,10 @@ async def analyze_image(file: UploadFile = File(...)):
     except Exception as e:
         logger.warning("analyze FAILED key=%s error=%s", key, e)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+
+    # RAG step: ground each finding in a real NNG article. Never raises —
+    # on failure findings just carry citation=None.
+    findings = ground_findings(findings)
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     r.setex(key, CACHE_TTL_SECONDS, json.dumps(findings))

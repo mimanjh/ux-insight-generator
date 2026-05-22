@@ -358,3 +358,18 @@ body {
   font-size: 14px;
   color: var(--muted);
 }
+
+.citation {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #eff6ff;
+  border-left: 3px solid #3b82f6;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.citation a {
+  color: #1d4ed8;
+  font-weight: 600;
+}
