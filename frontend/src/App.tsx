@@ -35,6 +35,7 @@ interface ApiResponse {
     cached: boolean;
     cache_key: string;
     screenshot: string;
+    analyzed_at: string;
 }
 
 interface CaptureFailedDetail {
@@ -112,7 +113,7 @@ export default function App() {
             fetch("/api/analyze", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ url }),
+                body: JSON.stringify({ url, refresh: (e.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "refresh" }),
             }),
         );
     }
@@ -160,7 +161,11 @@ export default function App() {
                 <button type="submit" disabled={loading || !url}>
                     {loading ? "Analyzing…" : "Analyze URL"}
                 </button>
+                <button type="submit" value="refresh" disabled={loading || !url} title="Capture the page again and run a new analysis">
+                    Analyze again
+                </button>
             </form>
+            <p className="status">Analyze again captures a fresh page and runs a new analysis.</p>
 
             {error?.kind === "capture_failed" && (
                 <div className="status capture-failed">
@@ -218,6 +223,7 @@ function Results({ data }: { data: ApiResponse }) {
     const { findings, cached } = data;
     return (
         <section className="results">
+            <p className="status">Review started <time dateTime={data.analyzed_at}>{new Date(data.analyzed_at).toLocaleString()}</time></p>
             <figure className="screenshot-preview">
                 <img src={data.screenshot} alt="Screenshot used for this UX review" />
                 <figcaption>Screenshot reviewed. If this shows the wrong page or a login screen, upload your own screenshot.</figcaption>

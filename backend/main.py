@@ -25,6 +25,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 
 import redis
 from dotenv import load_dotenv
@@ -50,7 +51,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # prompt text, model id, tool schema, theme taxonomy, etc. Old cache
 # entries become unreachable instantly — no flush needed.
 # v2: findings now carry a RAG-grounded `citation` field.
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 # REDIS_URL drives the cache backend choice. Examples:
@@ -133,6 +134,7 @@ r = _build_redis_client()
 
 class AnalyzeRequest(BaseModel):
     url: HttpUrl
+    refresh: bool = False
 
 
 class AnalyzeResponse(BaseModel):
@@ -140,6 +142,7 @@ class AnalyzeResponse(BaseModel):
     cached: bool
     cache_key: str
     screenshot: str
+    analyzed_at: str
 
 
 def cache_key_for_url(url: str) -> str:
@@ -182,7 +185,7 @@ def analyze(req: AnalyzeRequest):
             detail=f"Redis unreachable: {e}",
         )
 
-    if cached:
+    if cached and not req.refresh:
         logger.info("cache HIT  key=%s", key)
         return AnalyzeResponse(
             **json.loads(cached),
@@ -192,6 +195,7 @@ def analyze(req: AnalyzeRequest):
 
     logger.info("cache MISS key=%s -> capturing and analyzing", key)
     started = time.perf_counter()
+    analyzed_at = datetime.now(timezone.utc).isoformat()
 
     # Cache miss: capture + analyze. Both steps are slow. The HTTP
     # connection will be held open for ~30s — fine for a learning
@@ -230,7 +234,7 @@ def analyze(req: AnalyzeRequest):
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     screenshot = f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot}))
+    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at}))
     logger.info(
         "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
         key,
@@ -238,7 +242,7 @@ def analyze(req: AnalyzeRequest):
         CACHE_TTL_SECONDS,
     )
 
-    return AnalyzeResponse(findings=findings, screenshot=screenshot, cached=False, cache_key=key)
+    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, cached=False, cache_key=key)
 
 
 @api.post("/analyze-image", response_model=AnalyzeResponse)
@@ -286,6 +290,7 @@ async def analyze_image(file: UploadFile = File(...)):
         len(contents),
     )
     started = time.perf_counter()
+    analyzed_at = datetime.now(timezone.utc).isoformat()
 
     try:
         findings = analyze_screenshot(contents, file.content_type)
@@ -299,7 +304,7 @@ async def analyze_image(file: UploadFile = File(...)):
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     screenshot = f"data:{file.content_type};base64,{base64.b64encode(contents).decode('ascii')}"
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot}))
+    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at}))
     logger.info(
         "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
         key,
@@ -307,7 +312,7 @@ async def analyze_image(file: UploadFile = File(...)):
         CACHE_TTL_SECONDS,
     )
 
-    return AnalyzeResponse(findings=findings, screenshot=screenshot, cached=False, cache_key=key)
+    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, cached=False, cache_key=key)
 
 
 app.include_router(api)
