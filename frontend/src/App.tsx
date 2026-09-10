@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ChangeEvent } from "react";
 import "./App.css";
 
 type Severity = "high" | "medium" | "low";
@@ -50,6 +50,7 @@ type AppError =
     | { kind: "capture_failed"; detail: CaptureFailedDetail };
 
 const ACCEPTED_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 export default function App() {
     const [url, setUrl] = useState("");
@@ -58,10 +59,11 @@ export default function App() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<AppError | null>(null);
     const [result, setResult] = useState<ApiResponse | null>(null);
+    const resultsRef = useRef<HTMLDivElement>(null);
+    useEffect(() => { if (result) resultsRef.current?.focus(); }, [result]);
 
     async function submit(send: () => Promise<Response>) {
         setError(null);
-        setResult(null);
         setLoading(true);
         try {
             const resp = await send();
@@ -131,12 +133,13 @@ export default function App() {
 
     function onFileChange(e: ChangeEvent<HTMLInputElement>) {
         const f = e.target.files?.[0] ?? null;
-        if (f && !ACCEPTED_MIME.includes(f.type)) {
+        if (f && (!ACCEPTED_MIME.includes(f.type) || f.size > MAX_UPLOAD_BYTES || f.size === 0)) {
             setError({
                 kind: "generic",
-                message: `Unsupported file type: ${f.type || "unknown"}`,
+                message: f.size > MAX_UPLOAD_BYTES ? "Choose an image smaller than 5 MB." : f.size === 0 ? "This image is empty. Choose another image." : "Choose a PNG, JPG, WEBP or GIF image.",
             });
             setFile(null);
+            e.target.value = "";
             return;
         }
         setError(null);
@@ -155,8 +158,10 @@ export default function App() {
 
             <label htmlFor="review-context">Who is this for, and what should they accomplish? (optional)</label>
             <textarea id="review-context" value={context} onChange={e => setContext(e.target.value)} maxLength={1000} disabled={loading} rows={3} placeholder="For example: First-time shoppers completing a purchase on their phone." />
+            <label htmlFor="page-url">Page URL</label>
             <form className="input-row" onSubmit={onAnalyzeUrl}>
                 <input
+                    id="page-url"
                     type="url"
                     placeholder="https://example.com"
                     value={url}
@@ -164,7 +169,7 @@ export default function App() {
                     disabled={loading}
                 />
                 <button type="submit" disabled={loading || !url}>
-                    {loading ? "Analyzing…" : "Analyze URL"}
+                    Analyze URL
                 </button>
                 <button type="submit" value="refresh" disabled={loading || !url} title="Capture the page again and run a new analysis">
                     Analyze again
@@ -173,14 +178,14 @@ export default function App() {
             <p className="status">Analyze again captures a fresh page and runs a new analysis.</p>
 
             {error?.kind === "capture_failed" && (
-                <div className="status capture-failed">
+                <div className="status capture-failed" role="alert">
                     <strong>Couldn&apos;t capture this URL:</strong>{" "}
                     {error.detail.reason}
                     <p className="hint">{error.detail.hint} ↓</p>
                 </div>
             )}
             {error?.kind === "generic" && (
-                <p className="status error">Error: {error.message}</p>
+                <p className="status error" role="alert">Error: {error.message}</p>
             )}
 
             <div className="divider">
@@ -191,6 +196,8 @@ export default function App() {
                 <label className="file-label">
                     <input
                         type="file"
+                        aria-label="Screenshot image"
+                        aria-describedby="upload-help"
                         accept={ACCEPTED_MIME.join(",")}
                         onChange={onFileChange}
                         disabled={loading}
@@ -203,17 +210,21 @@ export default function App() {
                     </span>
                 </label>
                 <button type="submit" disabled={loading || !file}>
-                    {loading ? "Analyzing…" : "Analyze image"}
+                    Analyze image
                 </button>
             </form>
+            <p id="upload-help" className="status">PNG, JPG, WEBP or GIF, up to 5 MB. Images are sent to the analysis provider and cached with the report for 24 hours.</p>
 
             {loading && (
-                <p className="status">
+                <p className="status" role="status">
                     Running analysis. First-time runs take ~20-30s; cache hits
                     return instantly.
                 </p>
             )}
-            {result && <Results data={result} />}
+            {result && (loading || error) && <p className="status">Your previous review is still shown below.</p>}
+            <div ref={resultsRef} tabIndex={-1} aria-label="Review results">
+                {result && <Results key={result.analyzed_at} data={result} />}
+            </div>
         </main>
     );
 }
@@ -226,8 +237,31 @@ function formatBytes(n: number): string {
 
 function Results({ data }: { data: ApiResponse }) {
     const { findings, cached } = data;
+    const [exportStatus, setExportStatus] = useState("");
+    const ranked = [...findings.findings].sort((a, b) => ["high", "medium", "low"].indexOf(a.severity) - ["high", "medium", "low"].indexOf(b.severity));
+    async function copyReport() {
+        try {
+            await navigator.clipboard.writeText(reportMarkdown(data));
+            setExportStatus("Report copied.");
+        } catch {
+            setExportStatus("Could not access the clipboard. Use Download Markdown instead.");
+        }
+    }
+    function downloadReport() {
+        const url = URL.createObjectURL(new Blob([reportMarkdown(data)], { type: "text/markdown;charset=utf-8" }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "ux-review.md";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     return (
         <section className="results">
+            <div className="report-actions">
+                <button onClick={copyReport}>Copy report</button>
+                <button onClick={downloadReport}>Download Markdown</button>
+            </div>
+            <p role="status">{exportStatus}</p>
             <p className="status">Review started <time dateTime={data.analyzed_at}>{new Date(data.analyzed_at).toLocaleString()}</time></p>
             {data.context && <p><strong>Review context:</strong> {data.context}</p>}
             <figure className="screenshot-preview">
@@ -243,6 +277,7 @@ function Results({ data }: { data: ApiResponse }) {
                 </div>
             )}
 
+            {ranked[0] ? <div className="priority-summary"><h2>Start here</h2><strong>{ranked[0].title}</strong><p>{ranked[0].suggested_fix}</p></div> : <p>No clear UX issues were identified in this screenshot. This is not a full usability or accessibility audit.</p>}
             <h2>What I&apos;m looking at</h2>
             <p>{findings.what_im_looking_at}</p>
 
@@ -254,8 +289,9 @@ function Results({ data }: { data: ApiResponse }) {
             </ul>
 
             <h2>Findings</h2>
+            <p className="status">Observation confidence means how clearly the issue is visible. Judgment confidence means how certain the reviewer is that it causes a problem.</p>
             <div className="findings">
-                {findings.findings.map((f, i) => (
+                {ranked.map((f, i) => (
                     <FindingCard key={i} f={f} />
                 ))}
             </div>
@@ -306,9 +342,24 @@ function FindingCard({ f }: { f: Finding }) {
                         {f.citation.title}
                     </a>
                     {f.citation.relevance_note &&
-                        ` — ${f.citation.relevance_note}`}
+                        `: ${f.citation.relevance_note}`}
                 </p>
             )}
         </article>
     );
+}
+
+function reportMarkdown(data: ApiResponse): string {
+    return [
+        "# UX review", `Review started: ${data.analyzed_at}`, data.context ? `Context: ${data.context}` : "",
+        "## What is being reviewed", data.findings.what_im_looking_at,
+        "## What works", ...data.findings.whats_working.map(s => `- ${s}`),
+        "## Findings", ...data.findings.findings.map(f => [
+            `### ${f.title}`, `Severity: ${f.severity} | Theme: ${f.theme.replaceAll("_", " ")}`,
+            `Observation confidence: ${f.observation_confidence} | Judgment confidence: ${f.judgment_confidence}`,
+            `Observation: ${f.what_i_see}`, `Impact: ${f.why_it_matters}`, `Suggested fix: ${f.suggested_fix}`,
+            f.caveat ? `Caveat: ${f.caveat}` : "",
+            f.citation ? `Source: [${f.citation.title}](${f.citation.url})${f.citation.relevance_note ? `: ${f.citation.relevance_note}` : ""}` : "",
+        ].filter(Boolean).join("\n\n")),
+    ].filter(Boolean).join("\n\n");
 }

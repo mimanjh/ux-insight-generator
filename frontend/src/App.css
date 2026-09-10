@@ -379,3 +379,21 @@ textarea { display: block; width: 100%; margin: 8px 0 20px; padding: 10px; borde
   color: #1d4ed8;
   font-weight: 600;
 }
+
+button, select { font: inherit; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.report-actions button { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: white; cursor: pointer; }
+.priority-summary { padding: 12px 16px; border-left: 4px solid var(--theme-fg); background: var(--theme-bg); }
+.priority-summary h2 { margin-top: 0; }
+button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible, .file-label:focus-within { outline: 3px solid var(--theme-fg); outline-offset: 3px; }
+.input-row { flex-wrap: wrap; margin-top: 8px; }
+.input-row input { min-width: 0; flex-basis: 250px; }
+.file-label { min-width: 0; }
+.finding, .results { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .container { padding: 24px 16px 48px; }
+  .upload-row, .finding-header { flex-direction: column; align-items: stretch; }
+  .badges { flex-wrap: wrap; }
+  .file-name { min-width: 0; }
+  .finding { padding: 16px; }
+}
