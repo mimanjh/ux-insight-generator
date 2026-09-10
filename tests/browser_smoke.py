@@ -74,6 +74,9 @@ def run():
             main.ground_findings.side_effect = lambda report: {**report, "findings": [{**f, "citation_status": "unavailable"} for f in report["findings"]]}
             page.get_by_role("button", name="Analyze again", exact=True).click()
             expect(page.get_by_text("Source lookup was unavailable", exact=False)).to_be_visible()
+            fixture.redis.setex.side_effect = main.redis.ConnectionError("Cache offline")
+            page.get_by_role("button", name="Analyze again", exact=True).click()
+            expect(page.get_by_text("Your review is ready, but could not be saved", exact=False)).to_be_visible()
             fixture.capture.side_effect = main.CaptureFailed("Blocked")
             page.get_by_role("button", name="Analyze again", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text("Blocked")

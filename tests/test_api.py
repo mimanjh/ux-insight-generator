@@ -1,10 +1,14 @@
 """Offline API checks: python -m unittest discover -s tests."""
 import base64
 import copy
+import asyncio
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
+import httpx
+import redis as redis_library
 
 with patch("redis.from_url"):
     from backend import main
@@ -19,6 +23,8 @@ class ApiTests(unittest.TestCase):
         redis = MagicMock()
         redis.get.side_effect = self.cache.get
         redis.setex.side_effect = lambda key, ttl, value: self.cache.__setitem__(key, value)
+        locks = {}
+        redis.lock.side_effect = lambda key, **kwargs: locks.setdefault(key, threading.Lock())
         self.patches = [patch.object(main, "r", redis), patch.object(main, "capture_url", return_value=(PNG, "image/png")), patch.object(main, "analyze_screenshot", side_effect=lambda *a, **kw: copy.deepcopy(REPORT)), patch.object(main, "ground_findings", side_effect=lambda report: report)]
         self.redis, self.capture, self.model, _ = [p.start() for p in self.patches]
         for p in self.patches:
@@ -81,6 +87,46 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(self.capture.call_args.kwargs["mobile"], device == "mobile")
             self.assertEqual(self.capture.call_args.kwargs["viewport"], (390, 844) if device == "mobile" else (1440, 900))
         self.assertEqual(self.client.post("/api/analyze", json={"url": "https://example.com", "device": "invalid"}).status_code, 422)
+
+    def test_cache_write_failure_preserves_completed_review(self):
+        self.redis.setex.side_effect = redis_library.ConnectionError("offline")
+        response = self.client.post("/api/analyze", json={"url": "https://example.com"})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["cache_saved"])
+        self.assertEqual(response.json()["findings"]["what_im_looking_at"], REPORT["what_im_looking_at"])
+
+    def test_invalid_model_response_never_enters_cache(self):
+        self.model.side_effect = lambda *a, **kw: {"findings": "invalid"}
+        response = self.client.post("/api/analyze", json={"url": "https://example.com"})
+        self.assertEqual(response.status_code, 502)
+        self.assertFalse(self.cache)
+
+    def test_cache_timeout_fails_before_paid_work(self):
+        self.redis.get.side_effect = redis_library.TimeoutError("timeout")
+        self.assertEqual(self.client.post("/api/analyze", json={"url": "https://example.com"}).status_code, 503)
+        self.model.assert_not_called()
+
+    def test_slow_upload_keeps_health_responsive_and_blocks_duplicates(self):
+        entered, release = threading.Event(), threading.Event()
+        def slow_model(*args, **kwargs):
+            entered.set()
+            release.wait(5)
+            return copy.deepcopy(REPORT)
+        self.model.side_effect = slow_model
+        async def scenario():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+                upload = {"files": {"file": ("screen.png", PNG, "image/png")}}
+                task = asyncio.create_task(client.post("/api/analyze-image", **upload))
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                    self.assertEqual((await asyncio.wait_for(client.get("/api/health"), 1)).status_code, 200)
+                    self.assertEqual((await asyncio.wait_for(client.post("/api/analyze-image", **upload), 1)).status_code, 409)
+                    self.assertEqual(self.model.call_count, 1)
+                finally:
+                    release.set()
+                    self.assertEqual((await task).status_code, 200)
+                self.assertTrue((await client.post("/api/analyze-image", **upload)).json()["cached"])
+        asyncio.run(scenario())
 
 
 if __name__ == "__main__":
