@@ -38,6 +38,7 @@ docker run -d --name redis-cache -p 6379:6379 redis
 
 # 4. Configure secrets
 # Create .env in the project root with at minimum:
+#   ANALYSIS_ACCESS_KEY=<a long random access code you choose>
 #   ANTHROPIC_API_KEY=sk-ant-...
 #   VOYAGE_API_KEY=pa-...                   (for RAG embeddings)
 # Optionally:
@@ -72,6 +73,8 @@ All via `.env` (or shell environment).
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
+| `ANALYSIS_ACCESS_KEY` | yes | none | App access code. Analysis is disabled until configured; never use a provider API key here. |
+| `ANALYSIS_HOURLY_LIMIT` | no | `30` | Shared hourly request limit across all access-code holders, including cache hits and failed reviews. |
 | `ANTHROPIC_API_KEY` | yes | — | API key for Claude. |
 | `VOYAGE_API_KEY` | yes | — | API key for Voyage AI embeddings ([voyageai.com](https://www.voyageai.com/)). Used by `build_index.py` and at query time. Without it, analysis still works but findings get no citations. |
 | `REDIS_URL` | no | `redis://localhost:6379` | Use `rediss://` for TLS. Format: `redis://[user:pass@]host:port[/db]`. |
@@ -84,6 +87,24 @@ All via `.env` (or shell environment).
 | GET | `/api/health` | — | `{status, cache_backend}` |
 | POST | `/api/analyze` | `{url}` JSON | `{findings, cached, cache_key}` |
 | POST | `/api/analyze-image` | `multipart/form-data` with `file` | `{findings, cached, cache_key}` |
+
+Both analysis endpoints require `Authorization: Bearer <ANALYSIS_ACCESS_KEY>`.
+The web UI holds the code only in page memory. Requests must include Content-Length;
+streamed/chunked uploads are rejected. Set the access code locally in `.env` and in
+your deployment secret manager before deploying these changes. No secrets are set
+by the implementation or tests.
+
+URL requests accept `{url, refresh?: boolean, context?: string, device?: "desktop" | "mobile"}`.
+Uploads accept `file` and optional `context` (up to 1,000 characters). Responses add
+`screenshot`, `analyzed_at`, `context`, `device`, and `cache_saved`. An unavailable
+cache write still returns the completed report. Each finding has `citation_status`:
+`matched`, `no_match`, or `unavailable`.
+
+Capture uses a local proxy that validates public IPv4 addresses and connects to the
+checked numeric address. The same rule covers redirects and subresources. Only
+ports 80/443 are allowed; IPv6-only sites and private-network pages require screenshot
+upload. WebSockets and service workers are disabled during capture. Per-capture proxy
+connections are limited to 32, with a 60-second/32-MB limit per connection.
 
 Capture failures (HTTP 4xx, bot challenges) return HTTP 422 with `{error: "capture_failed", reason, hint}` so the frontend can offer the upload path as a fallback.
 
@@ -153,11 +174,14 @@ To grow the corpus, add entries to `nng_articles.json` and rerun `python -m back
 Reports include the exact analyzed screenshot as a data URL. The image is retained
 with its report in Redis for 24 hours, including uploaded screenshots. Base64 adds
 about one third to image size; plan cache memory accordingly. Screenshots have no
-separate public file URL. Cache version 3 separates these reports from older entries.
+separate public file URL. Cache version 8 separates these reports from older entries.
 
 Offline validation: `python -m unittest discover -s tests`. After building the
 frontend, run `python -m tests.browser_smoke` for the headless UI/API check. These
-checks replace Redis and paid AI services with local test doubles.
+checks replace Redis and paid AI services with local test doubles. Also run
+`python -m tests.capture_smoke` for real Chromium captures with offline DNS/transport
+fixtures, including blocked private redirects and subresources. The Validate PR
+workflow runs all of these checks. Real Redis integration must be checked separately.
 
 The cache key has the shape:
 
@@ -168,15 +192,15 @@ The cache key has the shape:
 - `REDIS_KEY_PREFIX` (env var): project namespace.
 - `CACHE_VERSION` (constant in `backend/main.py`): bump whenever the prompt, schema, model, or theme taxonomy changes. Old keys become unreachable instantly and expire naturally.
 - `url|image`: discriminator so a URL and an image upload can never collide.
-- Identity: for URLs, the URL string (pydantic-normalized). For images, the SHA-256 of the file bytes — same image hits the same key regardless of filename.
+- Identity: a SHA-256 hash of URL, review context and device, or image hash plus review context — same image hits the same key regardless of filename.
 
 TTL is 24h. Failures are not cached. To inspect or wipe the cache:
 
 ```bash
 docker exec -it redis-cache redis-cli
 > KEYS uxinsight:*                  # all this project's keys
-> GET uxinsight:analysis:v2:url:https://example.com/
-> DEL uxinsight:analysis:v2:url:...
+> GET uxinsight:analysis:v8:url:<identity-hash>
+> DEL uxinsight:analysis:v8:url:...
 ```
 
 ## Known limitations
@@ -184,8 +208,8 @@ docker exec -it redis-cache redis-cli
 - **Bot-protected sites still fail.** LinkedIn, banks, paywalled news. The stealth tweaks in `capture.py` (realistic UA, `navigator.webdriver` masking, full Chrome-for-Testing channel) beat mid-tier detection but not high-end Cloudflare Bot Management. Image upload is the fallback.
 - **HTTP 200 silent failures.** Cookie banners and login walls return 200 from Playwright's perspective; the analyzer will analyze the banner. Title-pattern matching catches the most common Cloudflare/captcha challenges, not all cases.
 - **Cache hits are byte-identical only.** Two screenshots of the same page with one pixel different will not hit the same cache entry. See the discussion of equivalence levels in the project notes.
-- **No request queue.** A single backend instance can hold one slow analysis open per worker. Fine for one user, would need a queue (RQ, Celery) at any real scale.
-- **No auth.** The API is open. Don't expose it on the public internet without putting an auth layer in front.
+- **No request queue.** Both endpoints run in worker threads. Redis limits the app to two concurrent reviews and one review per identical input; busy requests return 429 or 409. Locks expire after five minutes.
+- **Shared access code.** This is an owner-controlled tool, not a multi-user account system. Everyone with the code shares cached reports and the hourly limit. Use HTTPS outside local development.
 
 ## Development tips
 
