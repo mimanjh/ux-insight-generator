@@ -150,6 +150,15 @@ To grow the corpus, add entries to `nng_articles.json` and rerun `python -m back
 
 ## Cache notes
 
+Reports include the exact analyzed screenshot as a data URL. The image is retained
+with its report in Redis for 24 hours, including uploaded screenshots. Base64 adds
+about one third to image size; plan cache memory accordingly. Screenshots have no
+separate public file URL. Cache version 3 separates these reports from older entries.
+
+Offline validation: `python -m unittest discover -s tests`. After building the
+frontend, run `python -m tests.browser_smoke` for the headless UI/API check. These
+checks replace Redis and paid AI services with local test doubles.
+
 The cache key has the shape:
 
 ```
