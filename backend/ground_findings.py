@@ -23,9 +23,11 @@ finding still gets `citation: None` and the analysis returns normally.
 
 import json
 import logging
+from collections import Counter
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from backend.retrieval import IndexUnavailable, retrieve_batch
 
@@ -39,6 +41,17 @@ MAX_TOKENS = 1024
 # How many candidate articles to retrieve and offer per finding. A small
 # number keeps the prompt focused; the model still has a real choice.
 CANDIDATES_PER_FINDING = 4
+
+
+class CitationChoice(BaseModel):
+    model_config = ConfigDict(strict=True)
+    finding_index: int
+    article_id: str | None
+    relevance_note: str | None
+
+
+class CitationChoices(BaseModel):
+    citations: list[CitationChoice]
 
 TOOL = {
     "name": "attach_citations",
@@ -156,6 +169,7 @@ def ground_findings(analysis: dict) -> dict:
     # return early and the schema is still consistent for the frontend.
     for f in findings:
         f["citation"] = None
+        f["citation_status"] = "unavailable"
 
     if not findings:
         return analysis
@@ -200,12 +214,19 @@ def ground_findings(analysis: dict) -> dict:
     # Trust nothing: the model can return an out-of-range index or an
     # article_id we never offered. Drop anything that does not check out —
     # that validation is what stops a hallucinated citation from shipping.
-    for entry in tool_input.get("citations", []):
-        idx = entry.get("finding_index")
-        article_id = entry.get("article_id")
-        if not isinstance(idx, int) or not (0 <= idx < len(findings)):
+    try:
+        entries = CitationChoices.model_validate(tool_input).citations
+    except ValidationError:
+        logger.warning("Invalid citation response; returning the critique without sources")
+        return analysis
+    counts = Counter(entry.finding_index for entry in entries)
+    for entry in entries:
+        idx = entry.finding_index
+        article_id = entry.article_id
+        if not (0 <= idx < len(findings)) or counts[idx] != 1:
             continue
-        if not article_id:
+        if article_id is None:
+            findings[idx]["citation_status"] = "no_match"
             continue  # model declined — finding keeps citation=None
 
         offered = {c["id"]: c for c in candidates[idx]}
@@ -222,8 +243,9 @@ def ground_findings(analysis: dict) -> dict:
             "article_id": chosen["id"],
             "title": chosen["title"],
             "url": chosen["url"],
-            "relevance_note": entry.get("relevance_note"),
+            "relevance_note": entry.relevance_note,
         }
+        findings[idx]["citation_status"] = "matched"
 
     cited = sum(1 for f in findings if f["citation"])
     logger.info("RAG grounded %d/%d findings with a citation", cited, len(findings))

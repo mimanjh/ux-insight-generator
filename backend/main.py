@@ -52,7 +52,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # prompt text, model id, tool schema, theme taxonomy, etc. Old cache
 # entries become unreachable instantly — no flush needed.
 # v2: findings now carry a RAG-grounded `citation` field.
-CACHE_VERSION = 6
+CACHE_VERSION = 7
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 # REDIS_URL drives the cache backend choice. Examples:

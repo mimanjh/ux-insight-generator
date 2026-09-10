@@ -22,6 +22,7 @@ interface Finding {
     suggested_fix: string;
     caveat: string | null;
     citation: Citation | null;
+    citation_status: "matched" | "no_match" | "unavailable";
 }
 
 interface AnalysisPayload {
@@ -348,6 +349,7 @@ function FindingCard({ f }: { f: Finding }) {
                         `: ${f.citation.relevance_note}`}
                 </p>
             )}
+            {!f.citation && <p className="citation">{f.citation_status === "no_match" ? "No supporting source was found in the research collection." : "Source lookup was unavailable. This finding has not been checked against the research collection."}</p>}
         </article>
     );
 }
@@ -362,7 +364,7 @@ function reportMarkdown(data: ApiResponse): string {
             `Observation confidence: ${f.observation_confidence} | Judgment confidence: ${f.judgment_confidence}`,
             `Observation: ${f.what_i_see}`, `Impact: ${f.why_it_matters}`, `Suggested fix: ${f.suggested_fix}`,
             f.caveat ? `Caveat: ${f.caveat}` : "",
-            f.citation ? `Source: [${f.citation.title}](${f.citation.url})${f.citation.relevance_note ? `: ${f.citation.relevance_note}` : ""}` : "",
+            f.citation ? `Source: [${f.citation.title}](${f.citation.url})${f.citation.relevance_note ? `: ${f.citation.relevance_note}` : ""}` : f.citation_status === "no_match" ? "Source: No supporting source found in the research collection." : "Source: Lookup unavailable; not checked against the research collection.",
         ].filter(Boolean).join("\n\n")),
     ].filter(Boolean).join("\n\n");
 }
