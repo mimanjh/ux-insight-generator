@@ -22,6 +22,7 @@ interface Finding {
     suggested_fix: string;
     caveat: string | null;
     citation: Citation | null;
+    citation_status: "matched" | "no_match" | "unavailable";
 }
 
 interface AnalysisPayload {
@@ -33,6 +34,7 @@ interface AnalysisPayload {
 interface ApiResponse {
     findings: AnalysisPayload;
     cached: boolean;
+    cache_saved: boolean;
     cache_key: string;
     screenshot: string;
     analyzed_at: string;
@@ -57,6 +59,7 @@ export default function App() {
     const [url, setUrl] = useState("");
     const [context, setContext] = useState("");
     const [device, setDevice] = useState("desktop");
+    const [accessCode, setAccessCode] = useState("");
     const [file, setFile] = useState<File | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<AppError | null>(null);
@@ -118,7 +121,7 @@ export default function App() {
         submit(() =>
             fetch("/api/analyze", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessCode}` },
                 body: JSON.stringify({ url, context, device, refresh: (e.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "refresh" }),
             }),
         );
@@ -130,7 +133,7 @@ export default function App() {
         const fd = new FormData();
         fd.append("file", file);
         fd.append("context", context);
-        submit(() => fetch("/api/analyze-image", { method: "POST", body: fd }));
+        submit(() => fetch("/api/analyze-image", { method: "POST", headers: { Authorization: `Bearer ${accessCode}` }, body: fd }));
     }
 
     function onFileChange(e: ChangeEvent<HTMLInputElement>) {
@@ -158,6 +161,9 @@ export default function App() {
                 </p>
             </header>
 
+            <label htmlFor="access-code">Access code</label>
+            <input className="access-code" id="access-code" type="password" value={accessCode} onChange={e => setAccessCode(e.target.value)} autoComplete="off" maxLength={512} disabled={loading} aria-describedby="access-help" />
+            <p id="access-help" className="status">Use the code provided by the app owner. It is kept only while this page is open.</p>
             <label htmlFor="review-context">Who is this for, and what should they accomplish? (optional)</label>
             <textarea id="review-context" value={context} onChange={e => setContext(e.target.value)} maxLength={1000} disabled={loading} rows={3} placeholder="For example: First-time shoppers completing a purchase on their phone." />
             <label htmlFor="page-url">Page URL</label>
@@ -265,6 +271,7 @@ function Results({ data }: { data: ApiResponse }) {
                 <button onClick={downloadReport}>Download Markdown</button>
             </div>
             <p role="status">{exportStatus}</p>
+            {!data.cache_saved && <p className="status" role="status">Your review is ready, but could not be saved to the cache. Download it now to keep a copy.</p>}
             <p className="status">Review started <time dateTime={data.analyzed_at}>{new Date(data.analyzed_at).toLocaleString()}</time></p>
             {data.context && <p><strong>Review context:</strong> {data.context}</p>}
             <figure className="screenshot-preview">
@@ -348,6 +355,7 @@ function FindingCard({ f }: { f: Finding }) {
                         `: ${f.citation.relevance_note}`}
                 </p>
             )}
+            {!f.citation && <p className="citation">{f.citation_status === "no_match" ? "No supporting source was found in the research collection." : "Source lookup was unavailable. This finding has not been checked against the research collection."}</p>}
         </article>
     );
 }
@@ -362,7 +370,7 @@ function reportMarkdown(data: ApiResponse): string {
             `Observation confidence: ${f.observation_confidence} | Judgment confidence: ${f.judgment_confidence}`,
             `Observation: ${f.what_i_see}`, `Impact: ${f.why_it_matters}`, `Suggested fix: ${f.suggested_fix}`,
             f.caveat ? `Caveat: ${f.caveat}` : "",
-            f.citation ? `Source: [${f.citation.title}](${f.citation.url})${f.citation.relevance_note ? `: ${f.citation.relevance_note}` : ""}` : "",
+            f.citation ? `Source: [${f.citation.title}](${f.citation.url})${f.citation.relevance_note ? `: ${f.citation.relevance_note}` : ""}` : f.citation_status === "no_match" ? "Source: No supporting source found in the research collection." : "Source: Lookup unavailable; not checked against the research collection.",
         ].filter(Boolean).join("\n\n")),
     ].filter(Boolean).join("\n\n");
 }
