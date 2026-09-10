@@ -19,6 +19,7 @@ import argparse
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
+from backend.models import Analysis
 
 # --- Config ---
 MODEL = "claude-sonnet-4-5"
@@ -230,7 +231,7 @@ def analyze_screenshot(image_bytes: bytes, media_type: str, context: str = "") -
     # (python-dotenv's default is the opposite, which silently breaks dev
     #  when something has already exported ANTHROPIC_API_KEY="".)
     load_dotenv(override=True)
-    client = Anthropic()
+    client = Anthropic(timeout=45, max_retries=0)
 
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
 
@@ -273,9 +274,11 @@ def analyze_screenshot(image_bytes: bytes, media_type: str, context: str = "") -
 
     # Find the tool_use block. With tool_choice forcing our tool, there
     # should be exactly one. Hard-fail if not — that's our parsing policy.
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError("The review was truncated. Please try again.")
     for block in response.content:
         if block.type == "tool_use" and block.name == "report_ux_findings":
-            return block.input
+            return Analysis.model_validate(block.input).model_dump(mode="json")
 
     raise RuntimeError(
         f"Expected a tool_use block for 'report_ux_findings', got: "

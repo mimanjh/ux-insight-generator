@@ -33,10 +33,16 @@ def run():
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(f"http://127.0.0.1:{port}")
+            page.get_by_label("Access code", exact=True).fill("test-access")
             # Capture a real rendered page and use its exact bytes through the API.
             png = page.screenshot()
             fixture.capture.return_value = (png, "image/png")
             page.locator('input[type=url]').fill("https://example.com")
+            page.get_by_label("Access code", exact=True).fill("wrong-code")
+            page.get_by_role("button", name="Analyze URL", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("valid access code")
+            fixture.model.assert_not_called()
+            page.get_by_label("Access code", exact=True).fill("test-access")
             page.get_by_label("Who is this for", exact=False).fill("Shoppers checking out")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
             preview = page.get_by_alt_text("Screenshot used for this UX review")
@@ -52,6 +58,10 @@ def run():
             expect(preview).to_be_visible()
             assert fixture.capture.call_count == calls + 1
             expect(page.locator("time")).to_be_visible()
+            page.get_by_label("Capture size").select_option("mobile")
+            page.get_by_role("button", name="Analyze URL", exact=True).click()
+            expect(page.get_by_text("Mobile capture, first screen only", exact=False)).to_be_visible()
+            assert fixture.capture.call_args.kwargs["mobile"] is True
             page.locator('input[type=file]').set_input_files({"name": "screen.png", "mimeType": "image/png", "buffer": png})
             page.get_by_role("button", name="Analyze image", exact=True).click()
             expect(page.get_by_role("heading", name="Clarify checkout", exact=True)).to_be_visible()
@@ -66,6 +76,13 @@ def run():
             page.get_by_role("button", name="Copy report").click()
             expect(page.get_by_text("Report copied.", exact=True)).to_be_visible()
             assert page.evaluate("navigator.clipboard.readText()").replace("\r\n", "\n") == report
+            expect(page.get_by_text("No supporting source was found", exact=False)).to_be_visible()
+            main.ground_findings.side_effect = lambda report: {**report, "findings": [{**f, "citation_status": "unavailable"} for f in report["findings"]]}
+            page.get_by_role("button", name="Analyze again", exact=True).click()
+            expect(page.get_by_text("Source lookup was unavailable", exact=False)).to_be_visible()
+            fixture.redis.setex.side_effect = main.redis.ConnectionError("Cache offline")
+            page.get_by_role("button", name="Analyze again", exact=True).click()
+            expect(page.get_by_text("Your review is ready, but could not be saved", exact=False)).to_be_visible()
             fixture.capture.side_effect = main.CaptureFailed("Blocked")
             page.get_by_role("button", name="Analyze again", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text("Blocked")
@@ -89,4 +106,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
