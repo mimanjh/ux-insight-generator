@@ -37,9 +37,12 @@ def run():
             png = page.screenshot()
             fixture.capture.return_value = (png, "image/png")
             page.locator('input[type=url]').fill("https://example.com")
+            page.get_by_label("Who is this for", exact=False).fill("Shoppers checking out")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
             preview = page.get_by_alt_text("Screenshot used for this UX review")
             expect(preview).to_be_visible()
+            expect(page.get_by_text("Shoppers checking out", exact=False).last).to_be_visible()
+            assert fixture.model.call_args.kwargs["context"] == "Shoppers checking out"
             assert preview.evaluate("img => img.complete && img.naturalWidth > 0")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
             expect(page.get_by_text("Served from cache", exact=True)).to_be_visible()

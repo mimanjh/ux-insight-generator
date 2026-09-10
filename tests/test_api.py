@@ -56,6 +56,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(cached["screenshot"], fresh["screenshot"])
         self.assertEqual(cached["analyzed_at"], fresh["analyzed_at"])
 
+    def test_context_is_forwarded_and_separates_cache(self):
+        for path, kwargs in [("/api/analyze", {"json": {"url": "https://example.com"}}), ("/api/analyze-image", {"files": {"file": ("screen.png", PNG, "image/png")}})]:
+            for context in ["", "Shoppers checking out"]:
+                args = copy.deepcopy(kwargs)
+                if "json" in args:
+                    args["json"]["context"] = context
+                else:
+                    args["data"] = {"context": context}
+                response = self.client.post(path, **args)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertFalse(response.json()["cached"])
+                self.assertEqual(self.model.call_args.kwargs["context"], context)
+                self.assertEqual(response.json()["context"], context)
+                self.assertTrue(self.client.post(path, **args).json()["cached"])
+        self.assertEqual(self.client.post("/api/analyze", json={"url": "https://example.com", "context": "x" * 1001}).status_code, 422)
+        self.assertEqual(self.client.post("/api/analyze-image", files={"file": ("screen.png", PNG, "image/png")}, data={"context": "x" * 1001}).status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()
