@@ -29,10 +29,10 @@ from datetime import datetime, timezone
 
 import redis
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
+from fastapi import APIRouter, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 
 from backend.analyze_screenshot import analyze_screenshot
 from backend.capture import CaptureFailed, capture_url
@@ -51,7 +51,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # prompt text, model id, tool schema, theme taxonomy, etc. Old cache
 # entries become unreachable instantly — no flush needed.
 # v2: findings now carry a RAG-grounded `citation` field.
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 # REDIS_URL drives the cache backend choice. Examples:
@@ -135,6 +135,7 @@ r = _build_redis_client()
 class AnalyzeRequest(BaseModel):
     url: HttpUrl
     refresh: bool = False
+    context: str = Field(default="", max_length=1000)
 
 
 class AnalyzeResponse(BaseModel):
@@ -143,15 +144,18 @@ class AnalyzeResponse(BaseModel):
     cache_key: str
     screenshot: str
     analyzed_at: str
+    context: str
 
 
-def cache_key_for_url(url: str) -> str:
-    return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:url:{url}"
+def cache_key_for_url(url: str, context: str = "") -> str:
+    identity = hashlib.sha256(json.dumps([url, context.strip()]).encode()).hexdigest()
+    return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:url:{identity}"
 
 
-def cache_key_for_image(sha256_hex: str) -> str:
+def cache_key_for_image(sha256_hex: str, context: str = "") -> str:
     # Same input bytes -> same key, regardless of filename or upload source.
-    return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:image:{sha256_hex}"
+    identity = hashlib.sha256(json.dumps([sha256_hex, context.strip()]).encode()).hexdigest()
+    return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:image:{identity}"
 
 
 api = APIRouter(prefix="/api")
@@ -173,7 +177,8 @@ def health():
 @api.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: AnalyzeRequest):
     url = str(req.url)
-    key = cache_key_for_url(url)
+    context = req.context.strip()
+    key = cache_key_for_url(url, context)
 
     # Cache lookup. Failures here (Redis down) should be a 503 — we
     # don't want to silently bypass the cache and rack up API charges.
@@ -221,7 +226,7 @@ def analyze(req: AnalyzeRequest):
         )
 
     try:
-        findings = analyze_screenshot(image_bytes, media_type)
+        findings = analyze_screenshot(image_bytes, media_type, context=context)
     except Exception as e:
         # The screenshot succeeded but Claude failed (network, rate limit,
         # bad bytes). Don't cache — likely transient.
@@ -234,7 +239,7 @@ def analyze(req: AnalyzeRequest):
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     screenshot = f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at}))
+    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at, "context": context}))
     logger.info(
         "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
         key,
@@ -242,11 +247,11 @@ def analyze(req: AnalyzeRequest):
         CACHE_TTL_SECONDS,
     )
 
-    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, cached=False, cache_key=key)
+    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, context=context, cached=False, cache_key=key)
 
 
 @api.post("/analyze-image", response_model=AnalyzeResponse)
-async def analyze_image(file: UploadFile = File(...)):
+async def analyze_image(file: UploadFile = File(...), context: str = Form(default="", max_length=1000)):
     # Validate MIME type before reading any bytes.
     if file.content_type not in ALLOWED_IMAGE_MIME:
         raise HTTPException(
@@ -269,7 +274,8 @@ async def analyze_image(file: UploadFile = File(...)):
 
     # Identity-by-bytes: same image -> same hash -> same cache key.
     sha256_hex = hashlib.sha256(contents).hexdigest()
-    key = cache_key_for_image(sha256_hex)
+    context = context.strip()
+    key = cache_key_for_image(sha256_hex, context)
 
     try:
         cached = r.get(key)
@@ -293,7 +299,7 @@ async def analyze_image(file: UploadFile = File(...)):
     analyzed_at = datetime.now(timezone.utc).isoformat()
 
     try:
-        findings = analyze_screenshot(contents, file.content_type)
+        findings = analyze_screenshot(contents, file.content_type, context=context)
     except Exception as e:
         logger.warning("analyze FAILED key=%s error=%s", key, e)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
@@ -304,7 +310,7 @@ async def analyze_image(file: UploadFile = File(...)):
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     screenshot = f"data:{file.content_type};base64,{base64.b64encode(contents).decode('ascii')}"
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at}))
+    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at, "context": context}))
     logger.info(
         "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
         key,
@@ -312,7 +318,7 @@ async def analyze_image(file: UploadFile = File(...)):
         CACHE_TTL_SECONDS,
     )
 
-    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, cached=False, cache_key=key)
+    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, context=context, cached=False, cache_key=key)
 
 
 app.include_router(api)

@@ -36,6 +36,7 @@ interface ApiResponse {
     cache_key: string;
     screenshot: string;
     analyzed_at: string;
+    context: string;
 }
 
 interface CaptureFailedDetail {
@@ -52,6 +53,7 @@ const ACCEPTED_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
 export default function App() {
     const [url, setUrl] = useState("");
+    const [context, setContext] = useState("");
     const [file, setFile] = useState<File | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<AppError | null>(null);
@@ -113,7 +115,7 @@ export default function App() {
             fetch("/api/analyze", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ url, refresh: (e.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "refresh" }),
+                body: JSON.stringify({ url, context, refresh: (e.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "refresh" }),
             }),
         );
     }
@@ -123,6 +125,7 @@ export default function App() {
         if (!file || loading) return;
         const fd = new FormData();
         fd.append("file", file);
+        fd.append("context", context);
         submit(() => fetch("/api/analyze-image", { method: "POST", body: fd }));
     }
 
@@ -150,6 +153,8 @@ export default function App() {
                 </p>
             </header>
 
+            <label htmlFor="review-context">Who is this for, and what should they accomplish? (optional)</label>
+            <textarea id="review-context" value={context} onChange={e => setContext(e.target.value)} maxLength={1000} disabled={loading} rows={3} placeholder="For example: First-time shoppers completing a purchase on their phone." />
             <form className="input-row" onSubmit={onAnalyzeUrl}>
                 <input
                     type="url"
@@ -224,6 +229,7 @@ function Results({ data }: { data: ApiResponse }) {
     return (
         <section className="results">
             <p className="status">Review started <time dateTime={data.analyzed_at}>{new Date(data.analyzed_at).toLocaleString()}</time></p>
+            {data.context && <p><strong>Review context:</strong> {data.context}</p>}
             <figure className="screenshot-preview">
                 <img src={data.screenshot} alt="Screenshot used for this UX review" />
                 <figcaption>Screenshot reviewed. If this shows the wrong page or a login screen, upload your own screenshot.</figcaption>
