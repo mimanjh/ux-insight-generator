@@ -52,6 +52,10 @@ def run():
             expect(preview).to_be_visible()
             assert fixture.capture.call_count == calls + 1
             expect(page.locator("time")).to_be_visible()
+            page.get_by_label("Capture size").select_option("mobile")
+            page.get_by_role("button", name="Analyze URL", exact=True).click()
+            expect(page.get_by_text("Mobile capture, first screen only", exact=False)).to_be_visible()
+            assert fixture.capture.call_args.kwargs["mobile"] is True
             page.locator('input[type=file]').set_input_files({"name": "screen.png", "mimeType": "image/png", "buffer": png})
             page.get_by_role("button", name="Analyze image", exact=True).click()
             expect(page.get_by_role("heading", name="Clarify checkout", exact=True)).to_be_visible()

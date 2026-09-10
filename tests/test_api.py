@@ -73,6 +73,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/analyze", json={"url": "https://example.com", "context": "x" * 1001}).status_code, 422)
         self.assertEqual(self.client.post("/api/analyze-image", files={"file": ("screen.png", PNG, "image/png")}, data={"context": "x" * 1001}).status_code, 422)
 
+    def test_mobile_capture_has_separate_cache(self):
+        for device in ["desktop", "mobile"]:
+            response = self.client.post("/api/analyze", json={"url": "https://example.com", "device": device})
+            self.assertFalse(response.json()["cached"])
+            self.assertEqual(response.json()["device"], device)
+            self.assertEqual(self.capture.call_args.kwargs["mobile"], device == "mobile")
+            self.assertEqual(self.capture.call_args.kwargs["viewport"], (390, 844) if device == "mobile" else (1440, 900))
+        self.assertEqual(self.client.post("/api/analyze", json={"url": "https://example.com", "device": "invalid"}).status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()
