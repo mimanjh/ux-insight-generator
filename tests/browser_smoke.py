@@ -33,10 +33,16 @@ def run():
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(f"http://127.0.0.1:{port}")
+            page.get_by_label("Access code", exact=True).fill("test-access")
             # Capture a real rendered page and use its exact bytes through the API.
             png = page.screenshot()
             fixture.capture.return_value = (png, "image/png")
             page.locator('input[type=url]').fill("https://example.com")
+            page.get_by_label("Access code", exact=True).fill("wrong-code")
+            page.get_by_role("button", name="Analyze URL", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("valid access code")
+            fixture.model.assert_not_called()
+            page.get_by_label("Access code", exact=True).fill("test-access")
             page.get_by_label("Who is this for", exact=False).fill("Shoppers checking out")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
             preview = page.get_by_alt_text("Screenshot used for this UX review")
@@ -74,6 +80,9 @@ def run():
             main.ground_findings.side_effect = lambda report: {**report, "findings": [{**f, "citation_status": "unavailable"} for f in report["findings"]]}
             page.get_by_role("button", name="Analyze again", exact=True).click()
             expect(page.get_by_text("Source lookup was unavailable", exact=False)).to_be_visible()
+            fixture.redis.setex.side_effect = main.redis.ConnectionError("Cache offline")
+            page.get_by_role("button", name="Analyze again", exact=True).click()
+            expect(page.get_by_text("Your review is ready, but could not be saved", exact=False)).to_be_visible()
             fixture.capture.side_effect = main.CaptureFailed("Blocked")
             page.get_by_role("button", name="Analyze again", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text("Blocked")

@@ -189,7 +189,7 @@ def ground_findings(analysis: dict) -> dict:
     prompt = _build_prompt(findings, candidates)
     try:
         load_dotenv(override=True)
-        client = Anthropic()
+        client = Anthropic(timeout=45, max_retries=0)
         response = client.messages.create(
             model=GROUNDING_MODEL,
             max_tokens=MAX_TOKENS,
