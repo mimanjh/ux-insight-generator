@@ -23,13 +23,16 @@ import json
 import logging
 import os
 import time
+import secrets
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Literal
 
 import redis
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, FastAPI, File, Form, HTTPException, UploadFile, Request
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, HttpUrl
@@ -52,7 +55,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # prompt text, model id, tool schema, theme taxonomy, etc. Old cache
 # entries become unreachable instantly — no flush needed.
 # v2: findings now carry a RAG-grounded `citation` field.
-CACHE_VERSION = 8
+CACHE_VERSION = 9
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 # REDIS_URL drives the cache backend choice. Examples:
@@ -69,6 +72,8 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 # so concatenation produces conventional Redis hierarchy notation.
 # Examples: "uxinsight:", "myproject:", "team-a:".
 REDIS_KEY_PREFIX = os.environ.get("REDIS_KEY_PREFIX", "uxinsight:")
+ACCESS_KEY = os.environ.get("ANALYSIS_ACCESS_KEY", "")
+HOURLY_LIMIT = int(os.environ.get("ANALYSIS_HOURLY_LIMIT", "30"))
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 
@@ -85,6 +90,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def protect_analysis(request: Request, call_next):
+    if request.url.path.rstrip("/") not in ("/api/analyze", "/api/analyze-image") or request.method != "POST":
+        return await call_next(request)
+    if not ACCESS_KEY:
+        return JSONResponse({"detail": "Analysis access has not been configured by the owner."}, status_code=503)
+    supplied = request.headers.get("authorization", "")
+    if not secrets.compare_digest(supplied.encode(), f"Bearer {ACCESS_KEY}".encode()):
+        return JSONResponse({"detail": "Enter a valid access code to run a review."}, status_code=401)
+    try:
+        length = int(request.headers.get("content-length", ""))
+    except ValueError:
+        length = -1
+    if length < 0 or request.headers.get("transfer-encoding"):
+        return JSONResponse({"detail": "A fixed-length request body is required."}, status_code=411)
+    limit = MAX_UPLOAD_BYTES + 65536 if request.url.path.rstrip("/").endswith("analyze-image") else 16384
+    if length > limit:
+        return JSONResponse({"detail": "The request is too large. Choose an image smaller than 5 MB."}, status_code=413)
+    key = f"{REDIS_KEY_PREFIX}requests:{int(time.time()) // 3600}"
+    try:
+        count = await run_in_threadpool(r.eval, "local n = redis.call('INCR', KEYS[1]); if n == 1 then redis.call('EXPIRE', KEYS[1], 3600) end; return n", 1, key)
+    except redis.RedisError:
+        return JSONResponse({"detail": "Analysis is temporarily unavailable. Please try again."}, status_code=503)
+    if count > HOURLY_LIMIT:
+        return JSONResponse({"detail": "The hourly review limit has been reached. Please try again next hour."}, status_code=429, headers={"Retry-After": str(3600 - int(time.time()) % 3600)})
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 def _safe_redis_url(url: str) -> str:
     """Hide the password in REDIS_URL for log output.
@@ -175,7 +210,7 @@ def health():
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
         raise HTTPException(
             status_code=503,
-            detail=f"Redis unreachable: {e}",
+            detail="Saved reviews are temporarily unavailable.",
         )
 
 
@@ -199,10 +234,21 @@ def run_analysis(key: str, load_image, context: str, device: str, refresh: bool 
         raise HTTPException(status_code=503, detail="Analysis is temporarily unavailable. Please try again.")
     if not acquired:
         raise HTTPException(status_code=409, detail="This review is already running. Please try again shortly.")
+    slot = None
     try:
         cached = cached_response(key)
         if cached and not refresh:
             return cached
+        try:
+            for index in range(2):
+                candidate = r.lock(f"{REDIS_KEY_PREFIX}analysis-slot:{index}", timeout=300)
+                if candidate.acquire(blocking=False):
+                    slot = candidate
+                    break
+        except redis.RedisError:
+            raise HTTPException(status_code=503, detail="Analysis is temporarily unavailable. Please try again.")
+        if slot is None:
+            raise HTTPException(status_code=429, detail="Both review slots are busy. Please try again shortly.")
         analyzed_at = datetime.now(timezone.utc).isoformat()
         started = time.perf_counter()
         try:
@@ -228,6 +274,11 @@ def run_analysis(key: str, load_image, context: str, device: str, refresh: bool 
         logger.info("Analysis completed in %d ms", int((time.perf_counter() - started) * 1000))
         return response
     finally:
+        if slot is not None:
+            try:
+                slot.release()
+            except redis.RedisError:
+                logger.warning("Analysis slot lease will expire")
         try:
             lock.release()
         except redis.RedisError:
