@@ -10,7 +10,7 @@ with patch("redis.from_url"):
     from backend import main
 
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
-REPORT = {"what_im_looking_at": "A sample checkout", "whats_working": ["Clear heading"], "findings": [{"title": "Clarify checkout", "theme": "content_clarity", "severity": "high", "observation_confidence": "high", "judgment_confidence": "medium", "what_i_see": "An ambiguous button", "why_it_matters": "The next step is unclear", "suggested_fix": "Describe the next step", "caveat": None, "citation": None}]}
+REPORT = {"what_im_looking_at": "A sample checkout", "whats_working": ["Clear heading"], "findings": [{"title": "Clarify checkout", "theme": "content_clarity", "severity": "high", "observation_confidence": "high", "judgment_confidence": "medium", "what_i_see": "An ambiguous button", "why_it_matters": "The next step is unclear", "suggested_fix": "Describe the next step", "caveat": None, "citation": None, "citation_status": "no_match"}]}
 
 
 class ApiTests(unittest.TestCase):

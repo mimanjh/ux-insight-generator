@@ -70,6 +70,10 @@ def run():
             page.get_by_role("button", name="Copy report").click()
             expect(page.get_by_text("Report copied.", exact=True)).to_be_visible()
             assert page.evaluate("navigator.clipboard.readText()").replace("\r\n", "\n") == report
+            expect(page.get_by_text("No supporting source was found", exact=False)).to_be_visible()
+            main.ground_findings.side_effect = lambda report: {**report, "findings": [{**f, "citation_status": "unavailable"} for f in report["findings"]]}
+            page.get_by_role("button", name="Analyze again", exact=True).click()
+            expect(page.get_by_text("Source lookup was unavailable", exact=False)).to_be_visible()
             fixture.capture.side_effect = main.CaptureFailed("Blocked")
             page.get_by_role("button", name="Analyze again", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text("Blocked")
@@ -93,4 +97,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
