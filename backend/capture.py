@@ -26,6 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from backend.capture_proxy import capture_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,9 @@ USER_AGENT = (
 )
 LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",  # hides navigator.webdriver
+    "--proxy-bypass-list=<-loopback>",
+    "--disable-quic",
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 ]
 # Removes the navigator.webdriver=true that the disable-blink flag misses
 # on some Playwright builds. Belt-and-suspenders.
@@ -111,6 +115,7 @@ def url_to_filename(url: str) -> str:
 def capture_url(
     url: str,
     viewport: tuple[int, int] = DEFAULT_VIEWPORT,
+    mobile: bool = False,
 ) -> tuple[bytes, str]:
     """Render `url` in headless Chromium and return (png_bytes, media_type).
 
@@ -118,20 +123,28 @@ def capture_url(
     CLI, tests) write them themselves. Always returns PNG bytes.
     """
     width, height = viewport
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        raise CaptureFailed("Use a public HTTP or HTTPS page without embedded credentials.")
 
-    with sync_playwright() as p:
+    with capture_proxy() as proxy, sync_playwright() as p:
         # channel="chromium" forces the full Chrome-for-Testing build
         # rather than the headless-shell, which has a more recognizable
         # bot fingerprint.
-        browser = p.chromium.launch(channel="chromium", args=LAUNCH_ARGS)
+        browser = p.chromium.launch(channel="chromium", args=LAUNCH_ARGS, proxy={"server": proxy, "bypass": "<-loopback>"})
         try:
             context = browser.new_context(
                 viewport={"width": width, "height": height},
-                user_agent=USER_AGENT,
+                user_agent=p.devices["Pixel 7"]["user_agent"] if mobile else USER_AGENT,
+                is_mobile=mobile,
+                has_touch=mobile,
+                device_scale_factor=1,
                 locale="en-US",
                 timezone_id="America/New_York",
+                service_workers="block",
             )
             context.add_init_script(WEBDRIVER_HIDE_SCRIPT)
+            context.route_web_socket("**/*", lambda ws: ws.close())
             page = context.new_page()
 
             # Navigation — wrapped to convert transient errors into a
