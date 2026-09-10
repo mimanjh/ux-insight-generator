@@ -2,16 +2,14 @@
 FastAPI backend for the UX insight generator.
 
 Endpoints (all under /api):
-    GET  /api/health         — liveness + cache backend in use
-    POST /api/analyze        — body {url}, returns {findings, cached, cache_key}
-    POST /api/analyze-image  — multipart file upload; cache key is the
-                               SHA-256 of the bytes, so re-uploading the
-                               same image hits cache regardless of filename.
+    GET  /api/health: liveness and Redis availability
+    POST /api/analyze: URL capture and a fresh review
+    POST /api/analyze-image: uploaded screenshot and a fresh review
 
 Run from project root:
     uvicorn backend.main:app --reload --port 8000
 
-Cache backend: Redis is required. Both analysis endpoints use worker threads.
+Redis is required for rate limits and locks; reports and API keys are not cached. Both analysis endpoints use worker threads.
 
 Frontend mount: if frontend/dist exists (post `npm run build`), it is
 served at `/` so the whole stack runs as one process in production.
@@ -23,7 +21,7 @@ import json
 import logging
 import os
 import time
-import secrets
+import re
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Literal
@@ -41,6 +39,7 @@ from backend.analyze_screenshot import analyze_screenshot
 from backend.capture import CaptureFailed, capture_url
 from backend.ground_findings import ground_findings
 from backend.models import Analysis
+from anthropic import AuthenticationError, PermissionDeniedError, RateLimitError
 
 # Load .env early so REDIS_URL (and anything else env-driven) is available
 # at module import time. override=True so .env values win over an empty/
@@ -48,17 +47,13 @@ from backend.models import Analysis
 load_dotenv(override=True)
 
 logger = logging.getLogger("uvicorn.error")
+# Provider debug traces can contain request material. Keep them out of app logs.
+for name in ("anthropic", "httpx", "httpcore"):
+    logging.getLogger(name).setLevel(logging.WARNING)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Bump this whenever anything that affects model output changes:
-# prompt text, model id, tool schema, theme taxonomy, etc. Old cache
-# entries become unreachable instantly — no flush needed.
-# v2: findings now carry a RAG-grounded `citation` field.
-CACHE_VERSION = 9
-CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
-
-# REDIS_URL drives the cache backend choice. Examples:
+# REDIS_URL configures request limits and locks. Examples:
 #   redis://localhost:6379                            (local Docker / Memurai)
 #   redis://default:PASSWORD@HOST:PORT                (Redis Cloud free tier)
 #   rediss://default:PASSWORD@HOST:PORT               (TLS — note extra 's')
@@ -72,13 +67,12 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 # so concatenation produces conventional Redis hierarchy notation.
 # Examples: "uxinsight:", "myproject:", "team-a:".
 REDIS_KEY_PREFIX = os.environ.get("REDIS_KEY_PREFIX", "uxinsight:")
-ACCESS_KEY = os.environ.get("ANALYSIS_ACCESS_KEY", "")
 HOURLY_LIMIT = int(os.environ.get("ANALYSIS_HOURLY_LIMIT", "30"))
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 
-# MIME types the analyzer understands. We never persist uploads to disk,
-# so we don't need a MIME->extension map here.
+# MIME types the analyzer understands. Uploads are read from framework-managed
+# temporary storage; the application does not retain them.
 ALLOWED_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 
 app = FastAPI(title="UX Insight Generator")
@@ -96,11 +90,11 @@ app.add_middleware(
 async def protect_analysis(request: Request, call_next):
     if request.url.path.rstrip("/") not in ("/api/analyze", "/api/analyze-image") or request.method != "POST":
         return await call_next(request)
-    if not ACCESS_KEY:
-        return JSONResponse({"detail": "Analysis access has not been configured by the owner."}, status_code=503)
     supplied = request.headers.get("authorization", "")
-    if not secrets.compare_digest(supplied.encode(), f"Bearer {ACCESS_KEY}".encode()):
-        return JSONResponse({"detail": "Enter a valid access code to run a review."}, status_code=401)
+    if not re.fullmatch(r"Bearer sk-ant-[A-Za-z0-9_-]{16,500}", supplied):
+        return JSONResponse({"detail": "Enter your Anthropic API key for this review."}, status_code=401, headers={"Cache-Control": "no-store"})
+    if os.environ.get("ANTHROPIC_CUSTOM_HEADERS"):
+        return JSONResponse({"detail": "The analysis provider is not configured for user-supplied keys."}, status_code=503, headers={"Cache-Control": "no-store"})
     try:
         length = int(request.headers.get("content-length", ""))
     except ValueError:
@@ -121,6 +115,17 @@ async def protect_analysis(request: Request, call_next):
     response.headers["Cache-Control"] = "no-store"
     return response
 
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 def _safe_redis_url(url: str) -> str:
     """Hide the password in REDIS_URL for log output.
 
@@ -138,7 +143,7 @@ def _safe_redis_url(url: str) -> str:
 def _build_redis_client():
     """Connect to Redis at REDIS_URL; raise on failure.
 
-    Redis is a hard dependency: the app uses it for result caching and
+    Redis is a hard dependency: the app uses it for request limits and concurrency control and
     refuses to start without it. To run, point REDIS_URL at a reachable
     Redis (Docker, Memurai, WSL, or Redis Cloud).
     """
@@ -171,31 +176,27 @@ r = _build_redis_client()
 
 class AnalyzeRequest(BaseModel):
     url: HttpUrl
-    refresh: bool = False
     context: str = Field(default="", max_length=1000)
     device: Literal["desktop", "mobile"] = "desktop"
 
 
 class AnalyzeResponse(BaseModel):
     findings: Analysis
-    cached: bool
-    cache_saved: bool = True
-    cache_key: str
     screenshot: str
     analyzed_at: str
     context: str
     device: Literal["desktop", "mobile", "upload"]
 
 
-def cache_key_for_url(url: str, context: str = "", device: str = "desktop") -> str:
+def lock_key_for_url(url: str, context: str = "", device: str = "desktop") -> str:
     identity = hashlib.sha256(json.dumps([url, context.strip(), device]).encode()).hexdigest()
-    return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:url:{identity}"
+    return f"{REDIS_KEY_PREFIX}review-lock:url:{identity}"
 
 
-def cache_key_for_image(sha256_hex: str, context: str = "") -> str:
+def lock_key_for_image(sha256_hex: str, context: str = "") -> str:
     # Same input bytes -> same key, regardless of filename or upload source.
     identity = hashlib.sha256(json.dumps([sha256_hex, context.strip()]).encode()).hexdigest()
-    return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:image:{identity}"
+    return f"{REDIS_KEY_PREFIX}review-lock:image:{identity}"
 
 
 api = APIRouter(prefix="/api")
@@ -210,22 +211,11 @@ def health():
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
         raise HTTPException(
             status_code=503,
-            detail="Saved reviews are temporarily unavailable.",
+            detail="Analysis capacity is temporarily unavailable.",
         )
 
 
-def cached_response(key: str):
-    try:
-        value = r.get(key)
-        return AnalyzeResponse(**json.loads(value), cached=True, cache_key=key) if value else None
-    except (redis.RedisError, ValueError, TypeError):
-        raise HTTPException(status_code=503, detail="Saved reviews are temporarily unavailable. Please try again.")
-
-
-def run_analysis(key: str, load_image, context: str, device: str, refresh: bool = False):
-    cached = cached_response(key)
-    if cached and not refresh:
-        return cached
+def run_analysis(key: str, load_image, context: str, device: str, api_key: str):
     # ponytail: five-minute lease; add renewal if bounded provider calls ever exceed it.
     lock = r.lock(f"{key}:lock", timeout=300)
     try:
@@ -236,9 +226,6 @@ def run_analysis(key: str, load_image, context: str, device: str, refresh: bool 
         raise HTTPException(status_code=409, detail="This review is already running. Please try again shortly.")
     slot = None
     try:
-        cached = cached_response(key)
-        if cached and not refresh:
-            return cached
         try:
             for index in range(2):
                 candidate = r.lock(f"{REDIS_KEY_PREFIX}analysis-slot:{index}", timeout=300)
@@ -256,21 +243,20 @@ def run_analysis(key: str, load_image, context: str, device: str, refresh: bool 
         except CaptureFailed as e:
             raise HTTPException(status_code=422, detail={"error": "capture_failed", "reason": e.reason, "hint": "Try uploading a screenshot of this page instead."})
         try:
-            findings = Analysis.model_validate(analyze_screenshot(image_bytes, media_type, context=context))
-            findings = Analysis.model_validate(ground_findings(findings.model_dump(mode="json")))
+            findings = Analysis.model_validate(analyze_screenshot(image_bytes, media_type, context=context, api_key=api_key))
+            findings = Analysis.model_validate(ground_findings(findings.model_dump(mode="json"), api_key=api_key))
+        except (AuthenticationError, PermissionDeniedError):
+            raise HTTPException(status_code=401, detail="Anthropic rejected this key or its permissions. Check the key and enter it again.")
+        except RateLimitError:
+            raise HTTPException(status_code=429, detail="Your Anthropic account is rate limited. Check its limits and try again later.")
         except Exception as e:
             logger.warning("Analysis failed: %s", type(e).__name__)
             raise HTTPException(status_code=502, detail="The review could not be completed. Please try again.")
         response = AnalyzeResponse(
-            findings=findings, cached=False, cache_key=key, context=context, device=device,
+            findings=findings, context=context, device=device,
             screenshot=f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}",
             analyzed_at=analyzed_at,
         )
-        try:
-            r.setex(key, CACHE_TTL_SECONDS, response.model_dump_json(exclude={"cached", "cache_key", "cache_saved"}))
-        except redis.RedisError:
-            logger.warning("Completed review could not be cached")
-            response.cache_saved = False
         logger.info("Analysis completed in %d ms", int((time.perf_counter() - started) * 1000))
         return response
     finally:
@@ -286,17 +272,17 @@ def run_analysis(key: str, load_image, context: str, device: str, refresh: bool 
 
 
 @api.post("/analyze", response_model=AnalyzeResponse)
-def analyze(req: AnalyzeRequest):
+def analyze(req: AnalyzeRequest, request: Request):
     url, context = str(req.url), req.context.strip()
     return run_analysis(
-        cache_key_for_url(url, context, req.device),
+        lock_key_for_url(url, context, req.device),
         lambda: capture_url(url, viewport=(390, 844) if req.device == "mobile" else (1440, 900), mobile=req.device == "mobile"),
-        context, req.device, req.refresh,
+        context, req.device, request.headers["authorization"][7:],
     )
 
 
 @api.post("/analyze-image", response_model=AnalyzeResponse)
-def analyze_image(file: UploadFile = File(...), context: str = Form(default="", max_length=1000)):
+def analyze_image(request: Request, file: UploadFile = File(...), context: str = Form(default="", max_length=1000)):
     if file.content_type not in ALLOWED_IMAGE_MIME:
         raise HTTPException(status_code=400, detail="Choose a PNG, JPG, WEBP or GIF image.")
     contents = file.file.read(MAX_UPLOAD_BYTES + 1)
@@ -305,8 +291,8 @@ def analyze_image(file: UploadFile = File(...), context: str = Form(default="", 
     if not contents:
         raise HTTPException(status_code=400, detail="The image is empty. Choose another image.")
     context = context.strip()
-    key = cache_key_for_image(hashlib.sha256(contents).hexdigest(), context)
-    return run_analysis(key, lambda: (contents, file.content_type), context, "upload")
+    key = lock_key_for_image(hashlib.sha256(contents).hexdigest(), context)
+    return run_analysis(key, lambda: (contents, file.content_type), context, "upload", request.headers["authorization"][7:])
 
 
 app.include_router(api)

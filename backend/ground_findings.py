@@ -25,8 +25,8 @@ import json
 import logging
 from collections import Counter
 
-from dotenv import load_dotenv
 from anthropic import Anthropic
+import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from backend.retrieval import IndexUnavailable, retrieve_batch
@@ -154,7 +154,7 @@ def _build_prompt(findings: list[dict], candidates: list[list[dict]]) -> str:
     return "\n".join(blocks)
 
 
-def ground_findings(analysis: dict) -> dict:
+def ground_findings(analysis: dict, *, api_key: str) -> dict:
     """Attach a grounded NNG citation to each finding in `analysis`.
 
     Mutates and returns `analysis`. Every finding gains a `citation` key:
@@ -179,26 +179,27 @@ def ground_findings(analysis: dict) -> dict:
     try:
         candidates = retrieve_batch(queries, k=CANDIDATES_PER_FINDING)
     except IndexUnavailable as e:
-        logger.warning("RAG skipped — %s", e)
+        logger.warning("RAG skipped: %s", type(e).__name__)
         return analysis
     except Exception as e:
-        logger.warning("RAG retrieval failed (%s) — skipping citations", e)
+        logger.warning("RAG retrieval failed: %s", type(e).__name__)
         return analysis
 
     # --- Augmented generation: one Claude call to choose citations ---
     prompt = _build_prompt(findings, candidates)
     try:
-        load_dotenv(override=True)
-        client = Anthropic(timeout=45, max_retries=0)
-        response = client.messages.create(
-            model=GROUNDING_MODEL,
-            max_tokens=MAX_TOKENS,
-            tools=[TOOL],
-            tool_choice={"type": "tool", "name": "attach_citations"},
-            messages=[{"role": "user", "content": prompt}],
-        )
+        if not api_key:
+            raise ValueError("An explicit API key is required")
+        with Anthropic(api_key=api_key, base_url="https://api.anthropic.com", http_client=httpx.Client(trust_env=False, follow_redirects=False, timeout=45), timeout=45, max_retries=0) as client:
+            response = client.messages.create(
+                model=GROUNDING_MODEL,
+                max_tokens=MAX_TOKENS,
+                tools=[TOOL],
+                tool_choice={"type": "tool", "name": "attach_citations"},
+                messages=[{"role": "user", "content": prompt}],
+            )
     except Exception as e:
-        logger.warning("RAG grounding call failed (%s) — skipping", e)
+        logger.warning("RAG grounding call failed: %s", type(e).__name__)
         return analysis
 
     tool_input = None

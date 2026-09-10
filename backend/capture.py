@@ -177,10 +177,9 @@ def capture_url(
                 )
             except PlaywrightTimeout:
                 logger.info(
-                    "networkidle did not fire within %dms for %s; "
+                    "networkidle did not fire within %dms; "
                     "screenshotting anyway",
                     NETWORK_IDLE_TIMEOUT_MS,
-                    url,
                 )
 
             # Heuristic: page-title check for known bot-challenge / access

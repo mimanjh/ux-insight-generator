@@ -8,6 +8,8 @@ Usage:
     python -m backend.analyze_url https://www.amazon.com/dp/B07XYZ
 """
 
+import os
+from dotenv import load_dotenv
 import argparse
 import json
 from pathlib import Path
@@ -29,7 +31,8 @@ def analyze_url(url: str) -> Path:
     image_bytes, media_type = capture_url(url)
 
     print("Analyzing...")
-    findings = analyze_screenshot(image_bytes, media_type)
+    load_dotenv()
+    findings = analyze_screenshot(image_bytes, media_type, api_key=os.environ["ANTHROPIC_API_KEY"])
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     findings_path = OUTPUT_DIR / f"{url_to_filename(url)}.json"
