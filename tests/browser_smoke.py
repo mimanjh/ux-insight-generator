@@ -57,7 +57,27 @@ def run():
             expect(page.get_by_role("heading", name="Clarify checkout", exact=True)).to_be_visible()
             assert preview.evaluate("img => img.complete && img.naturalWidth > 0")
             Path("screenshots").mkdir(exist_ok=True)
+            with page.expect_download() as downloaded:
+                page.get_by_role("button", name="Download Markdown").click()
+            downloaded.value.save_as("screenshots/ux-review.md")
+            report = Path("screenshots/ux-review.md").read_text()
+            assert "Shoppers checking out" in report and "Describe the next step" in report
+            page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+            page.get_by_role("button", name="Copy report").click()
+            expect(page.get_by_text("Report copied.", exact=True)).to_be_visible()
+            assert page.evaluate("navigator.clipboard.readText()").replace("\r\n", "\n") == report
+            fixture.capture.side_effect = main.CaptureFailed("Blocked")
+            page.get_by_role("button", name="Analyze again", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("Blocked")
+            expect(preview).to_be_visible()
+            expect(page.get_by_text("Your previous review is still shown below.")).to_be_visible()
+            page.locator('input[type=file]').set_input_files({"name": "large.png", "mimeType": "image/png", "buffer": b"x" * (5 * 1024 * 1024 + 1)})
+            expect(page.get_by_role("alert")).to_contain_text("smaller than 5 MB")
+            expect(page.get_by_role("button", name="Analyze image", exact=True)).to_be_disabled()
             page.screenshot(path="screenshots/review-desktop.png", full_page=True)
+            page.set_viewport_size({"width": 375, "height": 812})
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            page.screenshot(path="screenshots/review-mobile.png", full_page=True)
             assert not errors, errors
             browser.close()
         print("PASS: headless URL, cached URL, upload and decoded screenshot preview")
@@ -69,3 +89,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+
