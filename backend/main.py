@@ -11,8 +11,7 @@ Endpoints (all under /api):
 Run from project root:
     uvicorn backend.main:app --reload --port 8000
 
-Cache backend: real Redis on localhost:6379 if reachable, else fakeredis
-(in-process, dev-only). Start real Redis via Docker, Memurai, or WSL2.
+Cache backend: Redis is required. Both analysis endpoints use worker threads.
 
 Frontend mount: if frontend/dist exists (post `npm run build`), it is
 served at `/` so the whole stack runs as one process in production.
@@ -38,6 +37,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from backend.analyze_screenshot import analyze_screenshot
 from backend.capture import CaptureFailed, capture_url
 from backend.ground_findings import ground_findings
+from backend.models import Analysis
 
 # Load .env early so REDIS_URL (and anything else env-driven) is available
 # at module import time. override=True so .env values win over an empty/
@@ -52,7 +52,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # prompt text, model id, tool schema, theme taxonomy, etc. Old cache
 # entries become unreachable instantly — no flush needed.
 # v2: findings now carry a RAG-grounded `citation` field.
-CACHE_VERSION = 7
+CACHE_VERSION = 8
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 # REDIS_URL drives the cache backend choice. Examples:
@@ -112,6 +112,7 @@ def _build_redis_client():
         REDIS_URL,
         decode_responses=True,
         socket_connect_timeout=3,
+        socket_timeout=3,
     )
     try:
         client.ping()
@@ -141,8 +142,9 @@ class AnalyzeRequest(BaseModel):
 
 
 class AnalyzeResponse(BaseModel):
-    findings: dict
+    findings: Analysis
     cached: bool
+    cache_saved: bool = True
     cache_key: str
     screenshot: str
     analyzed_at: str
@@ -177,151 +179,83 @@ def health():
         )
 
 
+def cached_response(key: str):
+    try:
+        value = r.get(key)
+        return AnalyzeResponse(**json.loads(value), cached=True, cache_key=key) if value else None
+    except (redis.RedisError, ValueError, TypeError):
+        raise HTTPException(status_code=503, detail="Saved reviews are temporarily unavailable. Please try again.")
+
+
+def run_analysis(key: str, load_image, context: str, device: str, refresh: bool = False):
+    cached = cached_response(key)
+    if cached and not refresh:
+        return cached
+    # ponytail: five-minute lease; add renewal if bounded provider calls ever exceed it.
+    lock = r.lock(f"{key}:lock", timeout=300)
+    try:
+        acquired = lock.acquire(blocking=False)
+    except redis.RedisError:
+        raise HTTPException(status_code=503, detail="Analysis is temporarily unavailable. Please try again.")
+    if not acquired:
+        raise HTTPException(status_code=409, detail="This review is already running. Please try again shortly.")
+    try:
+        cached = cached_response(key)
+        if cached and not refresh:
+            return cached
+        analyzed_at = datetime.now(timezone.utc).isoformat()
+        started = time.perf_counter()
+        try:
+            image_bytes, media_type = load_image()
+        except CaptureFailed as e:
+            raise HTTPException(status_code=422, detail={"error": "capture_failed", "reason": e.reason, "hint": "Try uploading a screenshot of this page instead."})
+        try:
+            findings = Analysis.model_validate(analyze_screenshot(image_bytes, media_type, context=context))
+            findings = Analysis.model_validate(ground_findings(findings.model_dump(mode="json")))
+        except Exception as e:
+            logger.warning("Analysis failed: %s", type(e).__name__)
+            raise HTTPException(status_code=502, detail="The review could not be completed. Please try again.")
+        response = AnalyzeResponse(
+            findings=findings, cached=False, cache_key=key, context=context, device=device,
+            screenshot=f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}",
+            analyzed_at=analyzed_at,
+        )
+        try:
+            r.setex(key, CACHE_TTL_SECONDS, response.model_dump_json(exclude={"cached", "cache_key", "cache_saved"}))
+        except redis.RedisError:
+            logger.warning("Completed review could not be cached")
+            response.cache_saved = False
+        logger.info("Analysis completed in %d ms", int((time.perf_counter() - started) * 1000))
+        return response
+    finally:
+        try:
+            lock.release()
+        except redis.RedisError:
+            logger.warning("Analysis lock could not be released; its lease will expire")
+
+
 @api.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: AnalyzeRequest):
-    url = str(req.url)
-    context = req.context.strip()
-    key = cache_key_for_url(url, context, req.device)
-
-    # Cache lookup. Failures here (Redis down) should be a 503 — we
-    # don't want to silently bypass the cache and rack up API charges.
-    try:
-        cached = r.get(key)
-    except redis.exceptions.ConnectionError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Redis unreachable: {e}",
-        )
-
-    if cached and not req.refresh:
-        logger.info("cache HIT  key=%s", key)
-        return AnalyzeResponse(
-            **json.loads(cached),
-            cached=True,
-            cache_key=key,
-        )
-
-    logger.info("cache MISS key=%s -> capturing and analyzing", key)
-    started = time.perf_counter()
-    analyzed_at = datetime.now(timezone.utc).isoformat()
-
-    # Cache miss: capture + analyze. Both steps are slow. The HTTP
-    # connection will be held open for ~30s — fine for a learning
-    # project, would queue in production.
-    try:
-        image_bytes, media_type = capture_url(url, viewport=(390, 844) if req.device == "mobile" else (1440, 900), mobile=req.device == "mobile")
-    except CaptureFailed as e:
-        # Capture failed in a way we recognized before spending an
-        # Anthropic call. Return a structured 422 so the frontend can
-        # surface the upload affordance as an alternative.
-        logger.info(
-            "capture FAILED key=%s reason=%r (no Anthropic call made)",
-            key,
-            e.reason,
-        )
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "capture_failed",
-                "reason": e.reason,
-                "hint": "Try uploading a screenshot of this page instead.",
-            },
-        )
-
-    try:
-        findings = analyze_screenshot(image_bytes, media_type, context=context)
-    except Exception as e:
-        # The screenshot succeeded but Claude failed (network, rate limit,
-        # bad bytes). Don't cache — likely transient.
-        logger.warning("analyze FAILED key=%s error=%s", key, e)
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
-
-    # RAG step: ground each finding in a real NNG article. Never raises —
-    # on failure findings just carry citation=None.
-    findings = ground_findings(findings)
-
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-    screenshot = f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at, "context": context, "device": req.device}))
-    logger.info(
-        "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
-        key,
-        elapsed_ms,
-        CACHE_TTL_SECONDS,
+    url, context = str(req.url), req.context.strip()
+    return run_analysis(
+        cache_key_for_url(url, context, req.device),
+        lambda: capture_url(url, viewport=(390, 844) if req.device == "mobile" else (1440, 900), mobile=req.device == "mobile"),
+        context, req.device, req.refresh,
     )
-
-    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, context=context, device=req.device, cached=False, cache_key=key)
 
 
 @api.post("/analyze-image", response_model=AnalyzeResponse)
-async def analyze_image(file: UploadFile = File(...), context: str = Form(default="", max_length=1000)):
-    # Validate MIME type before reading any bytes.
+def analyze_image(file: UploadFile = File(...), context: str = Form(default="", max_length=1000)):
     if file.content_type not in ALLOWED_IMAGE_MIME:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Unsupported content type {file.content_type!r}. "
-                f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_MIME))}"
-            ),
-        )
-
-    contents = await file.read()
+        raise HTTPException(status_code=400, detail="Choose a PNG, JPG, WEBP or GIF image.")
+    contents = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(contents) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=(
-                f"Image is {len(contents)} bytes; max is {MAX_UPLOAD_BYTES}. "
-                f"Compress or resize before uploading."
-            ),
-        )
-
-    # Identity-by-bytes: same image -> same hash -> same cache key.
-    sha256_hex = hashlib.sha256(contents).hexdigest()
+        raise HTTPException(status_code=413, detail="Choose an image smaller than 5 MB.")
+    if not contents:
+        raise HTTPException(status_code=400, detail="The image is empty. Choose another image.")
     context = context.strip()
-    key = cache_key_for_image(sha256_hex, context)
-
-    try:
-        cached = r.get(key)
-    except redis.exceptions.ConnectionError as e:
-        raise HTTPException(status_code=503, detail=f"Redis unreachable: {e}")
-
-    if cached:
-        logger.info("cache HIT  key=%s", key)
-        return AnalyzeResponse(
-            **json.loads(cached),
-            cached=True,
-            cache_key=key,
-        )
-
-    logger.info(
-        "cache MISS key=%s -> analyzing %d-byte upload",
-        key,
-        len(contents),
-    )
-    started = time.perf_counter()
-    analyzed_at = datetime.now(timezone.utc).isoformat()
-
-    try:
-        findings = analyze_screenshot(contents, file.content_type, context=context)
-    except Exception as e:
-        logger.warning("analyze FAILED key=%s error=%s", key, e)
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
-
-    # RAG step: ground each finding in a real NNG article. Never raises —
-    # on failure findings just carry citation=None.
-    findings = ground_findings(findings)
-
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
-    screenshot = f"data:{file.content_type};base64,{base64.b64encode(contents).decode('ascii')}"
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at, "context": context, "device": "upload"}))
-    logger.info(
-        "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
-        key,
-        elapsed_ms,
-        CACHE_TTL_SECONDS,
-    )
-
-    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, context=context, device="upload", cached=False, cache_key=key)
+    key = cache_key_for_image(hashlib.sha256(contents).hexdigest(), context)
+    return run_analysis(key, lambda: (contents, file.content_type), context, "upload")
 
 
 app.include_router(api)

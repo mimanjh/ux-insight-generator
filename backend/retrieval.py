@@ -76,7 +76,7 @@ def _embed_queries(queries: list[str]) -> np.ndarray:
     "document" at index time) is Voyage's asymmetric-retrieval hint.
     """
     load_dotenv(override=True)
-    client = voyageai.Client()
+    client = voyageai.Client(timeout=20, max_retries=0)
     result = client.embed(queries, model=EMBED_MODEL, input_type="query")
 
     vecs = np.array(result.embeddings, dtype=np.float32)

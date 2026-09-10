@@ -34,6 +34,7 @@ interface AnalysisPayload {
 interface ApiResponse {
     findings: AnalysisPayload;
     cached: boolean;
+    cache_saved: boolean;
     cache_key: string;
     screenshot: string;
     analyzed_at: string;
@@ -266,6 +267,7 @@ function Results({ data }: { data: ApiResponse }) {
                 <button onClick={downloadReport}>Download Markdown</button>
             </div>
             <p role="status">{exportStatus}</p>
+            {!data.cache_saved && <p className="status" role="status">Your review is ready, but could not be saved to the cache. Download it now to keep a copy.</p>}
             <p className="status">Review started <time dateTime={data.analyzed_at}>{new Date(data.analyzed_at).toLocaleString()}</time></p>
             {data.context && <p><strong>Review context:</strong> {data.context}</p>}
             <figure className="screenshot-preview">
