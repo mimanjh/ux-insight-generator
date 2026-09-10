@@ -42,6 +42,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.model.assert_not_called()
 
+    def test_refresh_replaces_cache_only_after_success(self):
+        payload = {"url": "https://example.com"}
+        first = self.client.post("/api/analyze", json=payload).json()
+        self.capture.return_value = (b"new screenshot", "image/png")
+        fresh = self.client.post("/api/analyze", json={**payload, "refresh": True}).json()
+        self.assertFalse(fresh["cached"])
+        self.assertNotEqual(fresh["screenshot"], first["screenshot"])
+        self.assertNotEqual(fresh["analyzed_at"], first["analyzed_at"])
+        self.capture.side_effect = main.CaptureFailed("Blocked")
+        self.assertEqual(self.client.post("/api/analyze", json={**payload, "refresh": True}).status_code, 422)
+        cached = self.client.post("/api/analyze", json=payload).json()
+        self.assertEqual(cached["screenshot"], fresh["screenshot"])
+        self.assertEqual(cached["analyzed_at"], fresh["analyzed_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

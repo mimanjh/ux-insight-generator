@@ -43,6 +43,12 @@ def run():
             assert preview.evaluate("img => img.complete && img.naturalWidth > 0")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
             expect(page.get_by_text("Served from cache", exact=True)).to_be_visible()
+            calls = fixture.capture.call_count
+            page.get_by_role("button", name="Analyze again", exact=True).click()
+            expect(page.get_by_text("Served from cache", exact=True)).to_have_count(0)
+            expect(preview).to_be_visible()
+            assert fixture.capture.call_count == calls + 1
+            expect(page.locator("time")).to_be_visible()
             page.locator('input[type=file]').set_input_files({"name": "screen.png", "mimeType": "image/png", "buffer": png})
             page.get_by_role("button", name="Analyze image", exact=True).click()
             expect(page.get_by_role("heading", name="Clarify checkout", exact=True)).to_be_visible()
