@@ -174,14 +174,17 @@ To grow the corpus, add entries to `nng_articles.json` and rerun `python -m back
 Reports include the exact analyzed screenshot as a data URL. The image is retained
 with its report in Redis for 24 hours, including uploaded screenshots. Base64 adds
 about one third to image size; plan cache memory accordingly. Screenshots have no
-separate public file URL. Cache version 8 separates these reports from older entries.
+separate public file URL. Cache version 9 separates these reports from older entries.
 
 Offline validation: `python -m unittest discover -s tests`. After building the
 frontend, run `python -m tests.browser_smoke` for the headless UI/API check. These
 checks replace Redis and paid AI services with local test doubles. Also run
 `python -m tests.capture_smoke` for real Chromium captures with offline DNS/transport
 fixtures, including blocked private redirects and subresources. The Validate PR
-workflow runs all of these checks. Real Redis integration must be checked separately.
+workflow runs all of these checks plus an isolated Redis service check. To repeat
+that integration check locally, explicitly supply a loopback test instance:
+`python -m tests.redis_smoke redis://127.0.0.1:6379/15`. It uses a random test-only
+key prefix and removes only its own keys afterward.
 
 The cache key has the shape:
 
@@ -199,8 +202,8 @@ TTL is 24h. Failures are not cached. To inspect or wipe the cache:
 ```bash
 docker exec -it redis-cache redis-cli
 > KEYS uxinsight:*                  # all this project's keys
-> GET uxinsight:analysis:v8:url:<identity-hash>
-> DEL uxinsight:analysis:v8:url:...
+> GET uxinsight:analysis:v9:url:<identity-hash>
+> DEL uxinsight:analysis:v9:url:...
 ```
 
 ## Known limitations
