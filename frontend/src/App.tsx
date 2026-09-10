@@ -37,6 +37,7 @@ interface ApiResponse {
     screenshot: string;
     analyzed_at: string;
     context: string;
+    device: "desktop" | "mobile" | "upload";
 }
 
 interface CaptureFailedDetail {
@@ -55,6 +56,7 @@ const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export default function App() {
     const [url, setUrl] = useState("");
     const [context, setContext] = useState("");
+    const [device, setDevice] = useState("desktop");
     const [file, setFile] = useState<File | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<AppError | null>(null);
@@ -117,7 +119,7 @@ export default function App() {
             fetch("/api/analyze", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ url, context, refresh: (e.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "refresh" }),
+                body: JSON.stringify({ url, context, device, refresh: (e.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "refresh" }),
             }),
         );
     }
@@ -159,6 +161,7 @@ export default function App() {
             <label htmlFor="review-context">Who is this for, and what should they accomplish? (optional)</label>
             <textarea id="review-context" value={context} onChange={e => setContext(e.target.value)} maxLength={1000} disabled={loading} rows={3} placeholder="For example: First-time shoppers completing a purchase on their phone." />
             <label htmlFor="page-url">Page URL</label>
+            <label className="device-choice">Capture size <select value={device} onChange={e => setDevice(e.target.value)} disabled={loading}><option value="desktop">Desktop (1440 × 900)</option><option value="mobile">Mobile (390 × 844)</option></select></label>
             <form className="input-row" onSubmit={onAnalyzeUrl}>
                 <input
                     id="page-url"
@@ -266,7 +269,7 @@ function Results({ data }: { data: ApiResponse }) {
             {data.context && <p><strong>Review context:</strong> {data.context}</p>}
             <figure className="screenshot-preview">
                 <img src={data.screenshot} alt="Screenshot used for this UX review" />
-                <figcaption>Screenshot reviewed. If this shows the wrong page or a login screen, upload your own screenshot.</figcaption>
+                <figcaption>{data.device === "upload" ? "Uploaded screenshot" : `${data.device === "mobile" ? "Mobile" : "Desktop"} capture, first screen only`}. If this shows the wrong page or a login screen, upload your own screenshot.</figcaption>
             </figure>
             {cached && (
                 <div
@@ -351,7 +354,7 @@ function FindingCard({ f }: { f: Finding }) {
 
 function reportMarkdown(data: ApiResponse): string {
     return [
-        "# UX review", `Review started: ${data.analyzed_at}`, data.context ? `Context: ${data.context}` : "",
+        "# UX review", `Review started: ${data.analyzed_at}`, `Capture: ${data.device}`, data.context ? `Context: ${data.context}` : "",
         "## What is being reviewed", data.findings.what_im_looking_at,
         "## What works", ...data.findings.whats_working.map(s => `- ${s}`),
         "## Findings", ...data.findings.findings.map(f => [

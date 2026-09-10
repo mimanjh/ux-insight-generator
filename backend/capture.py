@@ -111,6 +111,7 @@ def url_to_filename(url: str) -> str:
 def capture_url(
     url: str,
     viewport: tuple[int, int] = DEFAULT_VIEWPORT,
+    mobile: bool = False,
 ) -> tuple[bytes, str]:
     """Render `url` in headless Chromium and return (png_bytes, media_type).
 
@@ -127,7 +128,10 @@ def capture_url(
         try:
             context = browser.new_context(
                 viewport={"width": width, "height": height},
-                user_agent=USER_AGENT,
+                user_agent=p.devices["Pixel 7"]["user_agent"] if mobile else USER_AGENT,
+                is_mobile=mobile,
+                has_touch=mobile,
+                device_scale_factor=1,
                 locale="en-US",
                 timezone_id="America/New_York",
             )

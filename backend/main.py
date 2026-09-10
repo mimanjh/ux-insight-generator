@@ -26,6 +26,7 @@ import os
 import time
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Literal
 
 import redis
 from dotenv import load_dotenv
@@ -51,7 +52,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # prompt text, model id, tool schema, theme taxonomy, etc. Old cache
 # entries become unreachable instantly — no flush needed.
 # v2: findings now carry a RAG-grounded `citation` field.
-CACHE_VERSION = 5
+CACHE_VERSION = 6
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 # REDIS_URL drives the cache backend choice. Examples:
@@ -136,6 +137,7 @@ class AnalyzeRequest(BaseModel):
     url: HttpUrl
     refresh: bool = False
     context: str = Field(default="", max_length=1000)
+    device: Literal["desktop", "mobile"] = "desktop"
 
 
 class AnalyzeResponse(BaseModel):
@@ -145,10 +147,11 @@ class AnalyzeResponse(BaseModel):
     screenshot: str
     analyzed_at: str
     context: str
+    device: Literal["desktop", "mobile", "upload"]
 
 
-def cache_key_for_url(url: str, context: str = "") -> str:
-    identity = hashlib.sha256(json.dumps([url, context.strip()]).encode()).hexdigest()
+def cache_key_for_url(url: str, context: str = "", device: str = "desktop") -> str:
+    identity = hashlib.sha256(json.dumps([url, context.strip(), device]).encode()).hexdigest()
     return f"{REDIS_KEY_PREFIX}analysis:v{CACHE_VERSION}:url:{identity}"
 
 
@@ -178,7 +181,7 @@ def health():
 def analyze(req: AnalyzeRequest):
     url = str(req.url)
     context = req.context.strip()
-    key = cache_key_for_url(url, context)
+    key = cache_key_for_url(url, context, req.device)
 
     # Cache lookup. Failures here (Redis down) should be a 503 — we
     # don't want to silently bypass the cache and rack up API charges.
@@ -206,7 +209,7 @@ def analyze(req: AnalyzeRequest):
     # connection will be held open for ~30s — fine for a learning
     # project, would queue in production.
     try:
-        image_bytes, media_type = capture_url(url)
+        image_bytes, media_type = capture_url(url, viewport=(390, 844) if req.device == "mobile" else (1440, 900), mobile=req.device == "mobile")
     except CaptureFailed as e:
         # Capture failed in a way we recognized before spending an
         # Anthropic call. Return a structured 422 so the frontend can
@@ -239,7 +242,7 @@ def analyze(req: AnalyzeRequest):
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     screenshot = f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at, "context": context}))
+    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at, "context": context, "device": req.device}))
     logger.info(
         "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
         key,
@@ -247,7 +250,7 @@ def analyze(req: AnalyzeRequest):
         CACHE_TTL_SECONDS,
     )
 
-    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, context=context, cached=False, cache_key=key)
+    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, context=context, device=req.device, cached=False, cache_key=key)
 
 
 @api.post("/analyze-image", response_model=AnalyzeResponse)
@@ -310,7 +313,7 @@ async def analyze_image(file: UploadFile = File(...), context: str = Form(defaul
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     screenshot = f"data:{file.content_type};base64,{base64.b64encode(contents).decode('ascii')}"
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at, "context": context}))
+    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot, "analyzed_at": analyzed_at, "context": context, "device": "upload"}))
     logger.info(
         "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
         key,
@@ -318,7 +321,7 @@ async def analyze_image(file: UploadFile = File(...), context: str = Form(defaul
         CACHE_TTL_SECONDS,
     )
 
-    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, context=context, cached=False, cache_key=key)
+    return AnalyzeResponse(findings=findings, screenshot=screenshot, analyzed_at=analyzed_at, context=context, device="upload", cached=False, cache_key=key)
 
 
 app.include_router(api)
