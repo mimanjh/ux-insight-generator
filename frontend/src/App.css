@@ -209,6 +209,10 @@ body {
   margin-top: 32px;
 }
 
+.screenshot-preview { margin: 0 0 24px; }
+.screenshot-preview img { display: block; max-width: 100%; max-height: 560px; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; }
+.screenshot-preview figcaption { margin-top: 8px; color: var(--muted); font-size: 13px; }
+
 .results h2 {
   font-size: 13px;
   font-weight: 600;

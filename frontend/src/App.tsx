@@ -34,6 +34,7 @@ interface ApiResponse {
     findings: AnalysisPayload;
     cached: boolean;
     cache_key: string;
+    screenshot: string;
 }
 
 interface CaptureFailedDetail {
@@ -217,6 +218,10 @@ function Results({ data }: { data: ApiResponse }) {
     const { findings, cached } = data;
     return (
         <section className="results">
+            <figure className="screenshot-preview">
+                <img src={data.screenshot} alt="Screenshot used for this UX review" />
+                <figcaption>Screenshot reviewed. If this shows the wrong page or a login screen, upload your own screenshot.</figcaption>
+            </figure>
             {cached && (
                 <div
                     className="cache-badge"

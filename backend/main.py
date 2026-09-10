@@ -18,6 +18,7 @@ Frontend mount: if frontend/dist exists (post `npm run build`), it is
 served at `/` so the whole stack runs as one process in production.
 """
 
+import base64
 import hashlib
 import json
 import logging
@@ -49,7 +50,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # prompt text, model id, tool schema, theme taxonomy, etc. Old cache
 # entries become unreachable instantly — no flush needed.
 # v2: findings now carry a RAG-grounded `citation` field.
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24h
 
 # REDIS_URL drives the cache backend choice. Examples:
@@ -138,6 +139,7 @@ class AnalyzeResponse(BaseModel):
     findings: dict
     cached: bool
     cache_key: str
+    screenshot: str
 
 
 def cache_key_for_url(url: str) -> str:
@@ -183,7 +185,7 @@ def analyze(req: AnalyzeRequest):
     if cached:
         logger.info("cache HIT  key=%s", key)
         return AnalyzeResponse(
-            findings=json.loads(cached),
+            **json.loads(cached),
             cached=True,
             cache_key=key,
         )
@@ -227,7 +229,8 @@ def analyze(req: AnalyzeRequest):
     findings = ground_findings(findings)
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps(findings))
+    screenshot = f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot}))
     logger.info(
         "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
         key,
@@ -235,7 +238,7 @@ def analyze(req: AnalyzeRequest):
         CACHE_TTL_SECONDS,
     )
 
-    return AnalyzeResponse(findings=findings, cached=False, cache_key=key)
+    return AnalyzeResponse(findings=findings, screenshot=screenshot, cached=False, cache_key=key)
 
 
 @api.post("/analyze-image", response_model=AnalyzeResponse)
@@ -272,7 +275,7 @@ async def analyze_image(file: UploadFile = File(...)):
     if cached:
         logger.info("cache HIT  key=%s", key)
         return AnalyzeResponse(
-            findings=json.loads(cached),
+            **json.loads(cached),
             cached=True,
             cache_key=key,
         )
@@ -295,7 +298,8 @@ async def analyze_image(file: UploadFile = File(...)):
     findings = ground_findings(findings)
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    r.setex(key, CACHE_TTL_SECONDS, json.dumps(findings))
+    screenshot = f"data:{file.content_type};base64,{base64.b64encode(contents).decode('ascii')}"
+    r.setex(key, CACHE_TTL_SECONDS, json.dumps({"findings": findings, "screenshot": screenshot}))
     logger.info(
         "cache STORE key=%s elapsed_ms=%d ttl_s=%d",
         key,
@@ -303,7 +307,7 @@ async def analyze_image(file: UploadFile = File(...)):
         CACHE_TTL_SECONDS,
     )
 
-    return AnalyzeResponse(findings=findings, cached=False, cache_key=key)
+    return AnalyzeResponse(findings=findings, screenshot=screenshot, cached=False, cache_key=key)
 
 
 app.include_router(api)
