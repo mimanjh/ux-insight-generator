@@ -27,9 +27,13 @@ class ApiTests(unittest.TestCase):
         redis.lock.side_effect = lambda key, **kwargs: locks.setdefault(key, threading.Lock())
         self.patches = [patch.object(main, "r", redis), patch.object(main, "capture_url", return_value=(PNG, "image/png")), patch.object(main, "analyze_screenshot", side_effect=lambda *a, **kw: copy.deepcopy(REPORT)), patch.object(main, "ground_findings", side_effect=lambda report: report)]
         self.redis, self.capture, self.model, _ = [p.start() for p in self.patches]
+        self.redis.eval.return_value = 1
+        access = patch.object(main, "ACCESS_KEY", "test-access")
+        access.start()
+        self.addCleanup(access.stop)
         for p in self.patches:
             self.addCleanup(p.stop)
-        self.client = TestClient(main.app)
+        self.client = TestClient(main.app, headers={"Authorization": "Bearer test-access"})
 
     def test_preview_matches_model_input_and_survives_cache(self):
         for path, kwargs in [("/api/analyze", {"json": {"url": "https://example.com"}}), ("/api/analyze-image", {"files": {"file": ("screen.png", PNG, "image/png")}})]:
@@ -114,7 +118,7 @@ class ApiTests(unittest.TestCase):
             return copy.deepcopy(REPORT)
         self.model.side_effect = slow_model
         async def scenario():
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test", headers={"Authorization": "Bearer test-access"}) as client:
                 upload = {"files": {"file": ("screen.png", PNG, "image/png")}}
                 task = asyncio.create_task(client.post("/api/analyze-image", **upload))
                 try:
@@ -127,6 +131,32 @@ class ApiTests(unittest.TestCase):
                     self.assertEqual((await task).status_code, 200)
                 self.assertTrue((await client.post("/api/analyze-image", **upload)).json()["cached"])
         asyncio.run(scenario())
+
+    def test_access_and_rate_limits_fail_before_model_calls(self):
+        for path, kwargs in [("/api/analyze", {"json": {"url": "https://example.com"}}), ("/api/analyze-image", {"files": {"file": ("screen.png", PNG, "image/png")}})]:
+            self.assertEqual(self.client.post(path, headers={"Authorization": "Bearer wrong"}, **kwargs).status_code, 401)
+            with patch.object(main, "ACCESS_KEY", ""):
+                self.assertEqual(self.client.post(path, **kwargs).status_code, 503)
+            self.redis.eval.return_value = main.HOURLY_LIMIT + 1
+            limited = self.client.post(path, **kwargs)
+            self.assertEqual(limited.status_code, 429)
+            self.assertIn("Retry-After", limited.headers)
+            self.redis.eval.return_value = 1
+        self.model.assert_not_called()
+        self.assertEqual(self.client.post("/api/analyze-image", content=b"x" * (main.MAX_UPLOAD_BYTES + 65537)).status_code, 413)
+        self.assertEqual(self.client.get("/api/health", headers={"Authorization": ""}).status_code, 200)
+
+    def test_full_capacity_rejects_new_work_and_recovers(self):
+        slots = [self.redis.lock(f"{main.REDIS_KEY_PREFIX}analysis-slot:{index}") for index in range(2)]
+        for slot in slots:
+            slot.acquire()
+        try:
+            self.assertEqual(self.client.post("/api/analyze", json={"url": "https://example.com"}).status_code, 429)
+            self.model.assert_not_called()
+        finally:
+            for slot in slots:
+                slot.release()
+        self.assertEqual(self.client.post("/api/analyze", json={"url": "https://example.com"}).status_code, 200)
 
 
 if __name__ == "__main__":

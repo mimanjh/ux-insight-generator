@@ -33,10 +33,16 @@ def run():
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(f"http://127.0.0.1:{port}")
+            page.get_by_label("Access code", exact=True).fill("test-access")
             # Capture a real rendered page and use its exact bytes through the API.
             png = page.screenshot()
             fixture.capture.return_value = (png, "image/png")
             page.locator('input[type=url]').fill("https://example.com")
+            page.get_by_label("Access code", exact=True).fill("wrong-code")
+            page.get_by_role("button", name="Analyze URL", exact=True).click()
+            expect(page.get_by_role("alert")).to_contain_text("valid access code")
+            fixture.model.assert_not_called()
+            page.get_by_label("Access code", exact=True).fill("test-access")
             page.get_by_label("Who is this for", exact=False).fill("Shoppers checking out")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
             preview = page.get_by_alt_text("Screenshot used for this UX review")
