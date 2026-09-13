@@ -10,8 +10,6 @@
   --sev-low: #4d7c0f;
   --theme-bg: #ede9fe;
   --theme-fg: #5b21b6;
-  --cache-bg: #d1fae5;
-  --cache-fg: #065f46;
 
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 6px rgba(0, 0, 0, 0.04);
 }
@@ -224,16 +222,7 @@ textarea { display: block; width: 100%; margin: 8px 0 20px; padding: 10px; borde
   margin: 24px 0 8px;
 }
 
-.cache-badge {
-  display: inline-block;
-  padding: 4px 10px;
-  background: var(--cache-bg);
-  color: var(--cache-fg);
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 999px;
-  margin-bottom: 12px;
-}
+
 
 .working {
   margin: 0;
@@ -381,8 +370,8 @@ textarea { display: block; width: 100%; margin: 8px 0 20px; padding: 10px; borde
 }
 
 button, select { font: inherit; }
-.access-code { display: block; width: 100%; margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
-.access-code:focus-visible { outline: 3px solid var(--theme-fg); outline-offset: 3px; }
+.api-key { display: block; width: 100%; margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
+.api-key:focus-visible { outline: 3px solid var(--theme-fg); outline-offset: 3px; }
 .device-choice { display: block; margin: 8px 0; }
 .device-choice select { max-width: 100%; padding: 6px; margin-left: 8px; }
 .report-actions { display: flex; flex-wrap: wrap; gap: 8px; }

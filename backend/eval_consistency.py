@@ -16,6 +16,8 @@ whether two slightly differently-worded findings are "the same idea."
 That's the next step up (semantic eval), and we're deferring it.
 """
 
+import os
+from dotenv import load_dotenv
 import argparse
 import json
 from collections import Counter, defaultdict
@@ -30,10 +32,11 @@ def run_n_times(image_path: str, n: int) -> list[dict]:
     """Call the analyzer n times sequentially and return all results."""
     # Read the file once — no need to re-read the same bytes on every run.
     image_bytes, media_type = load_image_from_path(image_path)
+    load_dotenv()
     results = []
     for i in range(1, n + 1):
         print(f"  Run {i}/{n}...", flush=True)
-        results.append(analyze_screenshot(image_bytes, media_type))
+        results.append(analyze_screenshot(image_bytes, media_type, api_key=os.environ["ANTHROPIC_API_KEY"]))
     return results
 
 

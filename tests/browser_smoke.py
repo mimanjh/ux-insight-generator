@@ -9,7 +9,7 @@ from pathlib import Path
 
 import uvicorn
 from playwright.sync_api import sync_playwright, expect
-from tests.test_api import ApiTests, main
+from tests.test_api import API_KEY, SECOND_KEY, ApiTests, main
 
 
 def run():
@@ -33,16 +33,17 @@ def run():
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(f"http://127.0.0.1:{port}")
-            page.get_by_label("Access code", exact=True).fill("test-access")
+            key = page.get_by_label("Anthropic API key", exact=True)
             # Capture a real rendered page and use its exact bytes through the API.
             png = page.screenshot()
             fixture.capture.return_value = (png, "image/png")
             page.locator('input[type=url]').fill("https://example.com")
-            page.get_by_label("Access code", exact=True).fill("wrong-code")
+            key.fill("wrong-code")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
-            expect(page.get_by_role("alert")).to_contain_text("valid access code")
+            expect(page.get_by_role("alert")).to_contain_text("Enter your Anthropic API key")
             fixture.model.assert_not_called()
-            page.get_by_label("Access code", exact=True).fill("test-access")
+            expect(key).to_have_value("")
+            key.fill(API_KEY)
             page.get_by_label("Who is this for", exact=False).fill("Shoppers checking out")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
             preview = page.get_by_alt_text("Screenshot used for this UX review")
@@ -50,19 +51,23 @@ def run():
             expect(page.get_by_text("Shoppers checking out", exact=False).last).to_be_visible()
             assert fixture.model.call_args.kwargs["context"] == "Shoppers checking out"
             assert preview.evaluate("img => img.complete && img.naturalWidth > 0")
-            page.get_by_role("button", name="Analyze URL", exact=True).click()
-            expect(page.get_by_text("Served from cache", exact=True)).to_be_visible()
+            expect(key).to_have_value("")
+            expect(page.get_by_role("button", name="Analyze URL", exact=True)).to_be_disabled()
             calls = fixture.capture.call_count
-            page.get_by_role("button", name="Analyze again", exact=True).click()
-            expect(page.get_by_text("Served from cache", exact=True)).to_have_count(0)
-            expect(preview).to_be_visible()
+            key.fill(SECOND_KEY)
+            page.get_by_role("button", name="Analyze URL", exact=True).click()
+            expect(key).to_have_value("")
+            expect(page.get_by_text("Download your report to keep it", exact=False)).to_be_visible()
             assert fixture.capture.call_count == calls + 1
+            assert fixture.model.call_args.kwargs["api_key"] == SECOND_KEY
             expect(page.locator("time")).to_be_visible()
+            key.fill(API_KEY)
             page.get_by_label("Capture size").select_option("mobile")
             page.get_by_role("button", name="Analyze URL", exact=True).click()
             expect(page.get_by_text("Mobile capture, first screen only", exact=False)).to_be_visible()
             assert fixture.capture.call_args.kwargs["mobile"] is True
             page.locator('input[type=file]').set_input_files({"name": "screen.png", "mimeType": "image/png", "buffer": png})
+            key.fill(API_KEY)
             page.get_by_role("button", name="Analyze image", exact=True).click()
             expect(page.get_by_role("heading", name="Clarify checkout", exact=True)).to_be_visible()
             assert preview.evaluate("img => img.complete && img.naturalWidth > 0")
@@ -77,15 +82,15 @@ def run():
             expect(page.get_by_text("Report copied.", exact=True)).to_be_visible()
             assert page.evaluate("navigator.clipboard.readText()").replace("\r\n", "\n") == report
             expect(page.get_by_text("No supporting source was found", exact=False)).to_be_visible()
-            main.ground_findings.side_effect = lambda report: {**report, "findings": [{**f, "citation_status": "unavailable"} for f in report["findings"]]}
-            page.get_by_role("button", name="Analyze again", exact=True).click()
+            main.ground_findings.side_effect = lambda report, **kw: {**report, "findings": [{**f, "citation_status": "unavailable"} for f in report["findings"]]}
+            key.fill(API_KEY)
+            page.get_by_role("button", name="Analyze URL", exact=True).click()
             expect(page.get_by_text("Source lookup was unavailable", exact=False)).to_be_visible()
-            fixture.redis.setex.side_effect = main.redis.ConnectionError("Cache offline")
-            page.get_by_role("button", name="Analyze again", exact=True).click()
-            expect(page.get_by_text("Your review is ready, but could not be saved", exact=False)).to_be_visible()
             fixture.capture.side_effect = main.CaptureFailed("Blocked")
-            page.get_by_role("button", name="Analyze again", exact=True).click()
+            key.fill(API_KEY)
+            page.get_by_role("button", name="Analyze URL", exact=True).click()
             expect(page.get_by_role("alert")).to_contain_text("Blocked")
+            expect(key).to_have_value("")
             expect(preview).to_be_visible()
             expect(page.get_by_text("Your previous review is still shown below.")).to_be_visible()
             page.locator('input[type=file]').set_input_files({"name": "large.png", "mimeType": "image/png", "buffer": b"x" * (5 * 1024 * 1024 + 1)})
@@ -95,9 +100,20 @@ def run():
             page.set_viewport_size({"width": 375, "height": 812})
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             page.screenshot(path="screenshots/review-mobile.png", full_page=True)
+            assert API_KEY not in report and SECOND_KEY not in report
+            assert page.evaluate("Object.keys(localStorage).length + Object.keys(sessionStorage).length") == 0
+            assert not page.context.cookies()
+            key.fill(API_KEY)
+            page.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+            expect(key).to_have_value("")
+            key.fill(API_KEY)
+            page.reload()
+            expect(key).to_have_value("")
+            fixture.redis.get.assert_not_called()
+            fixture.redis.setex.assert_not_called()
             assert not errors, errors
             browser.close()
-        print("PASS: headless URL, cached URL, upload and decoded screenshot preview")
+        print("PASS: headless fresh URL/upload reviews, per-submit key clearing, no browser persistence, exports and mobile layout")
     finally:
         server.should_exit = True
         thread.join(timeout=5)

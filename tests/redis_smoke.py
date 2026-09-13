@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from unittest.mock import patch
 
 import redis
-from tests.test_api import ApiTests, main
+from tests.test_api import API_KEY, SECOND_KEY, ApiTests, main
 
 
 def run(url):
@@ -17,7 +17,7 @@ def run(url):
     client.ping()
     prefix = f"ux-test:{uuid.uuid4().hex}:"
     try:
-        for method in ["test_preview_matches_model_input_and_survives_cache", "test_refresh_replaces_cache_only_after_success", "test_slow_upload_keeps_health_responsive_and_blocks_duplicates"]:
+        for method in ["test_preview_matches_input_and_every_request_is_fresh", "test_slow_upload_keeps_health_responsive_and_blocks_duplicates"]:
             fixture = ApiTests()
             fixture.setUp()
             try:
@@ -36,8 +36,10 @@ def run(url):
             fixture.doCleanups()
         keys = list(client.scan_iter(prefix + "*"))
         assert keys and all(client.ttl(key) > 0 for key in keys)
+        assert all(":requests:" in key for key in keys)
+        assert all(API_KEY not in key and SECOND_KEY not in key for key in keys)
         assert not any(key.endswith(":lock") or "analysis-slot:" in key for key in keys)
-        print("PASS: real Redis cache, TTLs, lock contention/release and rate limit")
+        print("PASS: real Redis key-free counters, TTLs, lock contention/release and rate limit")
     finally:
         for key in client.scan_iter(prefix + "*"):
             client.delete(key)

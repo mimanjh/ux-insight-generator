@@ -33,9 +33,6 @@ interface AnalysisPayload {
 
 interface ApiResponse {
     findings: AnalysisPayload;
-    cached: boolean;
-    cache_saved: boolean;
-    cache_key: string;
     screenshot: string;
     analyzed_at: string;
     context: string;
@@ -59,7 +56,8 @@ export default function App() {
     const [url, setUrl] = useState("");
     const [context, setContext] = useState("");
     const [device, setDevice] = useState("desktop");
-    const [accessCode, setAccessCode] = useState("");
+    const apiKeyRef = useRef<HTMLInputElement>(null);
+    const [hasApiKey, setHasApiKey] = useState(false);
     const [file, setFile] = useState<File | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<AppError | null>(null);
@@ -67,11 +65,31 @@ export default function App() {
     const resultsRef = useRef<HTMLDivElement>(null);
     useEffect(() => { if (result) resultsRef.current?.focus(); }, [result]);
 
-    async function submit(send: () => Promise<Response>) {
+    useEffect(() => {
+        const clearKey = () => {
+            if (apiKeyRef.current) apiKeyRef.current.value = "";
+            setHasApiKey(false);
+        };
+        window.addEventListener("pagehide", clearKey);
+        window.addEventListener("pageshow", clearKey);
+        return () => {
+            window.removeEventListener("pagehide", clearKey);
+            window.removeEventListener("pageshow", clearKey);
+        };
+    }, []);
+
+    async function submit(send: (apiKey: string) => Promise<Response>) {
+        const apiKey = apiKeyRef.current?.value.trim() ?? "";
+        if (apiKeyRef.current) apiKeyRef.current.value = "";
+        setHasApiKey(false);
+        if (!apiKey) {
+            setError({ kind: "generic", message: "Enter your Anthropic API key for this review." });
+            return;
+        }
         setError(null);
         setLoading(true);
         try {
-            const resp = await send();
+            const resp = await send(apiKey);
             if (!resp.ok) {
                 // Try JSON first (FastAPI returns {detail: ...}); fall back to text.
                 let parsed: { detail?: unknown } | null = null;
@@ -118,11 +136,11 @@ export default function App() {
     function onAnalyzeUrl(e: FormEvent) {
         e.preventDefault();
         if (!url || loading) return;
-        submit(() =>
+        submit((apiKey) =>
             fetch("/api/analyze", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessCode}` },
-                body: JSON.stringify({ url, context, device, refresh: (e.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "refresh" }),
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+                body: JSON.stringify({ url, context, device }),
             }),
         );
     }
@@ -133,7 +151,7 @@ export default function App() {
         const fd = new FormData();
         fd.append("file", file);
         fd.append("context", context);
-        submit(() => fetch("/api/analyze-image", { method: "POST", headers: { Authorization: `Bearer ${accessCode}` }, body: fd }));
+        submit((apiKey) => fetch("/api/analyze-image", { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: fd }));
     }
 
     function onFileChange(e: ChangeEvent<HTMLInputElement>) {
@@ -161,9 +179,10 @@ export default function App() {
                 </p>
             </header>
 
-            <label htmlFor="access-code">Access code</label>
-            <input className="access-code" id="access-code" type="password" value={accessCode} onChange={e => setAccessCode(e.target.value)} autoComplete="off" maxLength={512} disabled={loading} aria-describedby="access-help" />
-            <p id="access-help" className="status">Use the code provided by the app owner. It is kept only while this page is open.</p>
+            <label htmlFor="anthropic-key">Anthropic API key</label>
+            <input className="api-key" id="anthropic-key" ref={apiKeyRef} type="password" onChange={e => setHasApiKey(Boolean(e.target.value.trim()))} autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={512} disabled={loading} aria-describedby="key-help" />
+            <p id="key-help" className="status">Enter a workspace-scoped key for each review. This app clears the field when you submit and does not save the key. Your key passes through this server to Anthropic, so only use a server you trust.</p>
+            <p className="status">Each review makes a fresh Anthropic request, plus a citation-check request when sources are available. Charges apply to your Anthropic API account; a Claude subscription does not cover API usage. <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener noreferrer">Manage API keys</a></p>
             <label htmlFor="review-context">Who is this for, and what should they accomplish? (optional)</label>
             <textarea id="review-context" value={context} onChange={e => setContext(e.target.value)} maxLength={1000} disabled={loading} rows={3} placeholder="For example: First-time shoppers completing a purchase on their phone." />
             <label htmlFor="page-url">Page URL</label>
@@ -177,14 +196,10 @@ export default function App() {
                     onChange={(e) => setUrl(e.target.value)}
                     disabled={loading}
                 />
-                <button type="submit" disabled={loading || !url}>
+                <button type="submit" disabled={loading || !url || !hasApiKey}>
                     Analyze URL
                 </button>
-                <button type="submit" value="refresh" disabled={loading || !url} title="Capture the page again and run a new analysis">
-                    Analyze again
-                </button>
             </form>
-            <p className="status">Analyze again captures a fresh page and runs a new analysis.</p>
 
             {error?.kind === "capture_failed" && (
                 <div className="status capture-failed" role="alert">
@@ -218,16 +233,15 @@ export default function App() {
                             : "No file selected"}
                     </span>
                 </label>
-                <button type="submit" disabled={loading || !file}>
+                <button type="submit" disabled={loading || !file || !hasApiKey}>
                     Analyze image
                 </button>
             </form>
-            <p id="upload-help" className="status">PNG, JPG, WEBP or GIF, up to 5 MB. Images are sent to the analysis provider and cached with the report for 24 hours.</p>
+            <p id="upload-help" className="status">PNG, JPG, WEBP or GIF, up to 5 MB. Images and context are sent to Anthropic; finding text is sent to Voyage for source lookup. This app does not save new screenshots or reports. Provider retention policies still apply.</p>
 
             {loading && (
                 <p className="status" role="status">
-                    Running analysis. First-time runs take ~20-30s; cache hits
-                    return instantly.
+                    Running a fresh review. This can take around 30 seconds. Enter your key again for another review.
                 </p>
             )}
             {result && (loading || error) && <p className="status">Your previous review is still shown below.</p>}
@@ -245,7 +259,7 @@ function formatBytes(n: number): string {
 }
 
 function Results({ data }: { data: ApiResponse }) {
-    const { findings, cached } = data;
+    const { findings } = data;
     const [exportStatus, setExportStatus] = useState("");
     const ranked = [...findings.findings].sort((a, b) => ["high", "medium", "low"].indexOf(a.severity) - ["high", "medium", "low"].indexOf(b.severity));
     async function copyReport() {
@@ -271,22 +285,13 @@ function Results({ data }: { data: ApiResponse }) {
                 <button onClick={downloadReport}>Download Markdown</button>
             </div>
             <p role="status">{exportStatus}</p>
-            {!data.cache_saved && <p className="status" role="status">Your review is ready, but could not be saved to the cache. Download it now to keep a copy.</p>}
+            <p className="status">Download your report to keep it. This app does not save it on the server.</p>
             <p className="status">Review started <time dateTime={data.analyzed_at}>{new Date(data.analyzed_at).toLocaleString()}</time></p>
             {data.context && <p><strong>Review context:</strong> {data.context}</p>}
             <figure className="screenshot-preview">
                 <img src={data.screenshot} alt="Screenshot used for this UX review" />
                 <figcaption>{data.device === "upload" ? "Uploaded screenshot" : `${data.device === "mobile" ? "Mobile" : "Desktop"} capture, first screen only`}. If this shows the wrong page or a login screen, upload your own screenshot.</figcaption>
             </figure>
-            {cached && (
-                <div
-                    className="cache-badge"
-                    title="No Anthropic call was made for this analysis."
-                >
-                    Served from cache
-                </div>
-            )}
-
             {ranked[0] ? <div className="priority-summary"><h2>Start here</h2><strong>{ranked[0].title}</strong><p>{ranked[0].suggested_fix}</p></div> : <p>No clear UX issues were identified in this screenshot. This is not a full usability or accessibility audit.</p>}
             <h2>What I&apos;m looking at</h2>
             <p>{findings.what_im_looking_at}</p>
